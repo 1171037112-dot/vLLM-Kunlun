@@ -31,32 +31,43 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import repeat
 from transformers import BatchFeature
 from transformers.models.qwen2_vl import Qwen2VLImageProcessorFast
-from transformers.models.qwen2_vl.image_processing_qwen2_vl import (
-    smart_resize as image_smart_resize)
+from transformers.models.qwen2_vl.image_processing_qwen2_vl import \
+    smart_resize as image_smart_resize
 from transformers.models.qwen3_vl import (Qwen3VLProcessor,
                                           Qwen3VLVideoProcessor)
 from transformers.models.qwen3_vl.configuration_qwen3_vl import (
     Qwen3VLConfig, Qwen3VLVisionConfig)
-from transformers.models.qwen3_vl.video_processing_qwen3_vl import (
-    smart_resize as video_smart_resize)
+from transformers.models.qwen3_vl.video_processing_qwen3_vl import \
+    smart_resize as video_smart_resize
 from transformers.video_utils import VideoMetadata
-
 from vllm.attention.layer import check_upstream_fa_availability
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import VllmConfig
 from vllm.distributed import get_pp_group
 from vllm.logger import init_logger
 from vllm.model_executor.layers.activation import _ACTIVATION_REGISTRY
-
 from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                RowParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+from vllm.model_executor.models.interfaces import (MultiModalEmbeddings,
+                                                   SupportsLoRA,
+                                                   SupportsMultiModal,
+                                                   SupportsPP)
 from vllm.model_executor.models.module_mapping import MultiModelKeys
+from vllm.model_executor.models.qwen2_vl import Qwen2VLProcessingInfo
+from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM, Qwen3Model
+from vllm.model_executor.models.utils import (AutoWeightsLoader,
+                                              PPMissingLayer, WeightsMapper,
+                                              maybe_prefix,
+                                              merge_multimodal_embeddings)
+from vllm.model_executor.models.vision import (
+    get_vit_attn_backend, run_dp_sharded_mrope_vision_model)
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.inputs import (MultiModalDataDict, MultiModalFieldConfig,
                                     MultiModalKwargsItem,
@@ -72,21 +83,12 @@ from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import uses_mrope
 from vllm.utils import is_list_of
 
-from vllm.model_executor.models.interfaces import (MultiModalEmbeddings, SupportsLoRA,
-                         SupportsMultiModal, SupportsPP)
 from .qwen2_5_vl import (Qwen2_5_VisionAttention,
                          Qwen2_5_VisionRotaryEmbedding,
                          Qwen2_5_VLImageEmbeddingInputs, Qwen2_5_VLImageInputs,
                          Qwen2_5_VLImagePixelInputs,
                          Qwen2_5_VLVideoEmbeddingInputs, Qwen2_5_VLVideoInputs,
                          Qwen2_5_VLVideoPixelInputs)
-from vllm.model_executor.models.qwen2_vl import Qwen2VLProcessingInfo
-from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM, Qwen3Model
-from vllm.model_executor.models.utils import (AutoWeightsLoader, PPMissingLayer, WeightsMapper,
-                    maybe_prefix, merge_multimodal_embeddings)
-from vllm.model_executor.models.vision import get_vit_attn_backend, run_dp_sharded_mrope_vision_model
-import xtorch_ops
-from einops import repeat
 
 logger = init_logger(__name__)
 
@@ -395,9 +397,9 @@ class Qwen3_VisionTransformer(nn.Module):
                 torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
         pos_ids = torch.cat(pos_ids, dim=0)
         rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
-        
+
         rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
-        
+
         return rotary_pos_emb
 
     def fast_pos_embed_interpolate(self,
@@ -413,7 +415,7 @@ class Qwen3_VisionTransformer(nn.Module):
                                     h,
                                     dtype=torch.float32,
                                     device=self.device)
-            
+
             w_idxs = torch.linspace(0,
                                     num_grid_per_side - 1,
                                     w,
@@ -516,18 +518,20 @@ class Qwen3_VisionTransformer(nn.Module):
         hidden_states = hidden_states.unsqueeze(1)
         rotary_pos_emb = rotary_pos_emb.to(hidden_states.device)
         max_seqlen, seqlens = self.compute_attn_mask_seqlen(cu_seqlens)
-        
+
         rotary_pos_emb_cos = rotary_pos_emb.cos()
         rotary_pos_emb_sin = rotary_pos_emb.sin()
         interleaved = False
         rotary_pos_emb_cos = repeat(
-            rotary_pos_emb_cos,
-            "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")                  # shape: [seq_len, 1, head_dim]
+            rotary_pos_emb_cos, "... d -> ... 1 (2 d)" if not interleaved else
+            "... d -> ... 1 (d 2)")  # shape: [seq_len, 1, head_dim]
         rotary_pos_emb_sin = repeat(
-            rotary_pos_emb_sin,
-            "... d -> ... 1 (2 d)" if not interleaved else "... d -> ... 1 (d 2)")                  # shape: [seq_len, 1, head_dim]
-        rotary_pos_emb_cos_sin_cache = torch.cat([rotary_pos_emb_cos, rotary_pos_emb_sin], dim=1)   # shape: [seq_len, 2, head_dim]
-        
+            rotary_pos_emb_sin, "... d -> ... 1 (2 d)" if not interleaved else
+            "... d -> ... 1 (d 2)")  # shape: [seq_len, 1, head_dim]
+        rotary_pos_emb_cos_sin_cache = torch.cat(
+            [rotary_pos_emb_cos, rotary_pos_emb_sin],
+            dim=1)  # shape: [seq_len, 2, head_dim]
+
         deepstack_feature_lists = []
         for layer_num, blk in enumerate(self.blocks):
             hidden_states = blk(hidden_states,
@@ -787,14 +791,14 @@ class Qwen3VLDummyInputsBuilder(BaseDummyInputsBuilder[Qwen3VLProcessingInfo]):
         num_frames: int,
         num_videos: int,
     ) -> list[VideoItem]:
-        min_width = 64   
-        min_height = 64  
-        min_frames = 2  
-        
-        width = max(min_width, width // 16)  
-        height = max(min_height, height // 16) 
-        num_frames = max(min_frames, min(num_frames, 8))  
-        
+        min_width = 64
+        min_height = 64
+        min_frames = 2
+
+        width = max(min_width, width // 16)
+        height = max(min_height, height // 16)
+        num_frames = max(min_frames, min(num_frames, 8))
+
         video = np.full((num_frames, width, height, 3), 255, dtype=np.uint8)
         video_items = []
         for i in range(num_videos):

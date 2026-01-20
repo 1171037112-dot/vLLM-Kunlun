@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Inference-only HF format GLM-4 model compatible with THUDM weights."""
 from vllm.config import VllmConfig
-# from vllm.model_executor.models.llama import LlamaForCausalLM
-from .llama import LlamaForCausalLM #noqa: F401
-
 from vllm.model_executor.models.utils import PPMissingLayer
+
+# from vllm.model_executor.models.llama import LlamaForCausalLM
+from .llama import LlamaForCausalLM  # noqa: F401
+
 
 class GlmForCausalLM(LlamaForCausalLM):
 

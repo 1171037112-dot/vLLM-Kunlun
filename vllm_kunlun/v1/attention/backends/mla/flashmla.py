@@ -5,22 +5,21 @@ from dataclasses import dataclass
 from typing import ClassVar, Optional, Union
 
 import torch
-
 from vllm.attention.backends.abstract import AttentionLayer, AttentionType
-from vllm_kunlun.ops.attention.flashmla import (flash_mla_with_kvcache,
-                                         get_mla_metadata,
-                                         is_flashmla_supported)
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
-from vllm_kunlun.v1.attention.backends.mla.common import (MLACommonBackend,
-                                                   MLACommonDecodeMetadata,
-                                                   MLACommonImpl,
-                                                   MLACommonMetadata,
-                                                   MLACommonMetadataBuilder)
 from vllm.v1.attention.backends.utils import AttentionCGSupport
 from vllm.v1.kv_cache_interface import AttentionSpec
 
+from vllm_kunlun.ops.attention.flashmla import (flash_mla_with_kvcache,
+                                                get_mla_metadata,
+                                                is_flashmla_supported)
+from vllm_kunlun.v1.attention.backends.mla.common import (
+    MLACommonBackend, MLACommonDecodeMetadata, MLACommonImpl,
+    MLACommonMetadata, MLACommonMetadataBuilder)
+
 logger = init_logger(__name__)
+
 
 class FlashMLABackend(MLACommonBackend):
 

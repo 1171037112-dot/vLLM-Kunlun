@@ -29,47 +29,36 @@ from itertools import islice
 import torch
 from torch import nn
 from transformers import PretrainedConfig as SeedOssConfig
-
 from vllm.attention import AttentionType
-from vllm_kunlun.ops.attention.layer import Attention
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
 from vllm.logger import init_logger
-from vllm_kunlun.ops.activation import SiluAndMul
 from vllm.model_executor.layers.layernorm import RMSNorm
-from vllm.model_executor.layers.linear import (
-    MergedColumnParallelLinear,
-    QKVParallelLinear,
-    RowParallelLinear,
-)
+from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
+                                               QKVParallelLinear,
+                                               RowParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
-from vllm_kunlun.ops.vocab_parallel_embedding import (
-    ParallelLMHead,
-    VocabParallelEmbedding,
-)
 from vllm.model_executor.model_loader.weight_utils import (
-    default_weight_loader,
-    maybe_remap_kv_scale_name,
-)
-from vllm.sequence import IntermediateTensors
-
+    default_weight_loader, maybe_remap_kv_scale_name)
 from vllm.model_executor.models.interfaces import SupportsLoRA, SupportsPP
 from vllm.model_executor.models.utils import (
-    AutoWeightsLoader,
-    PPMissingLayer,
-    is_pp_missing_parameter,
-    make_empty_intermediate_tensors_factory,
-    make_layers,
-    maybe_prefix,
-)
+    AutoWeightsLoader, PPMissingLayer, is_pp_missing_parameter,
+    make_empty_intermediate_tensors_factory, make_layers, maybe_prefix)
+from vllm.sequence import IntermediateTensors
+
+from vllm_kunlun.ops.activation import SiluAndMul
+from vllm_kunlun.ops.attention.layer import Attention
+from vllm_kunlun.ops.vocab_parallel_embedding import (ParallelLMHead,
+                                                      VocabParallelEmbedding)
 
 logger = init_logger(__name__)
 
 
 class SeedOssMLP(nn.Module):
+
     def __init__(
         self,
         hidden_size: int,
@@ -107,6 +96,7 @@ class SeedOssMLP(nn.Module):
 
 
 class SeedOssAttention(nn.Module):
+
     def __init__(
         self,
         hidden_size: int,
@@ -192,6 +182,7 @@ class SeedOssAttention(nn.Module):
 
 
 class SeedOssDecoderLayer(nn.Module):
+
     def __init__(
         self,
         config: SeedOssConfig,
@@ -234,10 +225,10 @@ class SeedOssDecoderLayer(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.mlp",
         )
-        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(
-            config.hidden_size, eps=config.rms_norm_eps
-        )
+        self.input_layernorm = RMSNorm(config.hidden_size,
+                                       eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size,
+                                                eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -250,14 +241,16 @@ class SeedOssDecoderLayer(nn.Module):
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+            hidden_states, residual = self.input_layernorm(
+                hidden_states, residual)
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
         )
 
         # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
+        hidden_states, residual = self.post_attention_layernorm(
+            hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
@@ -268,9 +261,9 @@ class SeedOssDecoderLayer(nn.Module):
         "positions": -1,
         "intermediate_tensors": 0,
         "inputs_embeds": 0,
-    }
-)
+    })
 class SeedOssModel(nn.Module):
+
     def __init__(
         self,
         *,
@@ -286,8 +279,7 @@ class SeedOssModel(nn.Module):
 
         # TODO (@robertgshaw2): see if this can be moved out
         if cache_config.sliding_window is not None and hasattr(
-            config, "max_window_layers"
-        ):
+                config, "max_window_layers"):
             assert config.max_window_layers == config.num_hidden_layers, (
                 "Sliding window for some but all layers is not supported. "
                 "This model uses sliding window but `max_window_layers` = {} "
@@ -295,16 +287,14 @@ class SeedOssModel(nn.Module):
                 "to discuss this feature.".format(
                     config.max_window_layers,
                     config.num_hidden_layers,
-                )
-            )
+                ))
 
         self.config = config
         self.quant_config = quant_config
         self.vocab_size = config.vocab_size
 
-        if get_pp_group().is_first_rank or (
-            config.tie_word_embeddings and get_pp_group().is_last_rank
-        ):
+        if get_pp_group().is_first_rank or (config.tie_word_embeddings
+                                            and get_pp_group().is_last_rank):
             self.embed_tokens = VocabParallelEmbedding(
                 config.vocab_size,
                 config.hidden_size,
@@ -328,8 +318,7 @@ class SeedOssModel(nn.Module):
         )
 
         self.make_empty_intermediate_tensors = make_empty_intermediate_tensors_factory(
-            ["hidden_states", "residual"], config.hidden_size
-        )
+            ["hidden_states", "residual"], config.hidden_size)
         if get_pp_group().is_last_rank:
             self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         else:
@@ -362,13 +351,15 @@ class SeedOssModel(nn.Module):
                 residual,
             )
         if not get_pp_group().is_last_rank:
-            return IntermediateTensors(
-                {"hidden_states": hidden_states, "residual": residual}
-            )
+            return IntermediateTensors({
+                "hidden_states": hidden_states,
+                "residual": residual
+            })
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 
-    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+    def load_weights(self, weights: Iterable[tuple[str,
+                                                   torch.Tensor]]) -> set[str]:
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
             ("qkv_proj", "q_proj", "q"),
@@ -383,14 +374,13 @@ class SeedOssModel(nn.Module):
             if "rotary_emb.inv_freq" in name:
                 continue
             if self.quant_config is not None and (
-                scale_name := self.quant_config.get_cache_scale(name)
-            ):
+                    scale_name := self.quant_config.get_cache_scale(name)):
                 # Loading kv cache quantization scales
                 param = params_dict[scale_name]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
-                loaded_weight = (
-                    loaded_weight if loaded_weight.dim() == 0 else loaded_weight[0]
-                )
+                weight_loader = getattr(param, "weight_loader",
+                                        default_weight_loader)
+                loaded_weight = (loaded_weight if loaded_weight.dim() == 0 else
+                                 loaded_weight[0])
                 weight_loader(param, loaded_weight)
                 loaded_params.add(scale_name)
                 continue
@@ -418,7 +408,8 @@ class SeedOssModel(nn.Module):
                 if is_pp_missing_parameter(name, self):
                     continue
                 param = params_dict[name]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                weight_loader = getattr(param, "weight_loader",
+                                        default_weight_loader)
                 weight_loader(param, loaded_weight)
             loaded_params.add(name)
         return loaded_params
@@ -447,9 +438,8 @@ class SeedOssForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         self.lora_config = lora_config
 
         self.quant_config = quant_config
-        self.model = SeedOssModel(
-            vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
-        )
+        self.model = SeedOssModel(vllm_config=vllm_config,
+                                  prefix=maybe_prefix(prefix, "model"))
 
         if get_pp_group().is_last_rank:
             if config.tie_word_embeddings:
@@ -467,8 +457,7 @@ class SeedOssForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         self.logits_processor = LogitsProcessor(config.vocab_size)
 
         self.make_empty_intermediate_tensors = (
-            self.model.make_empty_intermediate_tensors
-        )
+            self.model.make_empty_intermediate_tensors)
 
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
@@ -480,9 +469,8 @@ class SeedOssForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
-        hidden_states = self.model(
-            input_ids, positions, intermediate_tensors, inputs_embeds
-        )
+        hidden_states = self.model(input_ids, positions, intermediate_tensors,
+                                   inputs_embeds)
         return hidden_states
 
     def compute_logits(
@@ -492,9 +480,11 @@ class SeedOssForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         logits = self.logits_processor(self.lm_head, hidden_states)
         return logits
 
-    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+    def load_weights(self, weights: Iterable[tuple[str,
+                                                   torch.Tensor]]) -> set[str]:
         loader = AutoWeightsLoader(
             self,
-            skip_prefixes=(["lm_head."] if self.config.tie_word_embeddings else None),
+            skip_prefixes=(["lm_head."]
+                           if self.config.tie_word_embeddings else None),
         )
         return loader.load_weights(weights)

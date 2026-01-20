@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-
-from vllm_kunlun.ops.attention.layer import Attention
 # from vllm.attention import Attention
 from vllm.config import CacheConfig
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.quantization import QuantizationConfig
+
+from vllm_kunlun.ops.attention.layer import Attention
 
 
 @dataclass

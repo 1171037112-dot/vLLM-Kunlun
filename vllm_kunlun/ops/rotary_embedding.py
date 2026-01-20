@@ -15,20 +15,20 @@
 # This file is a part of the vllm-ascend project.
 #
 
-import torch
-import xspeedgate_ops
 import os
-from vllm.model_executor.layers.rotary_embedding import (
-    RotaryEmbedding, YaRNScalingRotaryEmbedding,
-    DynamicNTKScalingRotaryEmbedding, MRotaryEmbedding,
-    DeepseekScalingRotaryEmbedding)
 from typing import Optional, Tuple
+
+import torch
+from vllm.model_executor.layers.rotary_embedding import (
+    DeepseekScalingRotaryEmbedding, MRotaryEmbedding, RotaryEmbedding)
+
 
 def vllm_kunlun_compute_cos_sin_cache(self) -> torch.Tensor:
     """Compute the cos and sin cache."""
     inv_freq = self._compute_inv_freq(self.base)
     if hasattr(self, 'scaling_factor'):
-        self.max_position_embeddings = int(self.max_position_embeddings * self.scaling_factor)
+        self.max_position_embeddings = int(self.max_position_embeddings *
+                                           self.scaling_factor)
     t = torch.arange(self.max_position_embeddings, dtype=torch.float)
 
     freqs = torch.einsum("i,j -> ij", t, inv_freq)
@@ -51,30 +51,31 @@ def vllm_kunlun_compute_cos_sin_cache(self) -> torch.Tensor:
 
 
 def vllm_kunlun_forward_cuda(
-        self,
-        positions: torch.Tensor,
-        query: torch.Tensor,
-        key: Optional[torch.Tensor] = None,
-        offsets: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """forward_cuda"""
-        from vllm_kunlun.ops._kunlun_ops import KunlunOps as ops
+    self,
+    positions: torch.Tensor,
+    query: torch.Tensor,
+    key: Optional[torch.Tensor] = None,
+    offsets: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """forward_cuda"""
+    from vllm_kunlun.ops._kunlun_ops import KunlunOps as ops
 
-        if self.cos_sin_cache.device != query.device or \
-            self.cos_sin_cache.dtype != query.dtype:
-            self.cos_sin_cache = self.cos_sin_cache.to(query.device,
-                                                       dtype=query.dtype)
-        # ops.rotary_embedding()/batched_rotary_embedding()
-        # are in-place operations that update the query and key tensors.
-        if offsets is not None:
-            ops.batched_rotary_embedding(positions, query, key, self.head_size,
-                                         self.cos_sin_cache,
-                                         self.is_neox_style, self.rotary_dim,
-                                         offsets)
-        else:
-            query, key = ops.rotary_embedding(positions, query, key, self.head_size,
-                                 self.cos_sin_cache, self.is_neox_style)
-        return query, key
+    if self.cos_sin_cache.device != query.device or \
+        self.cos_sin_cache.dtype != query.dtype:
+        self.cos_sin_cache = self.cos_sin_cache.to(query.device,
+                                                   dtype=query.dtype)
+    # ops.rotary_embedding()/batched_rotary_embedding()
+    # are in-place operations that update the query and key tensors.
+    if offsets is not None:
+        ops.batched_rotary_embedding(positions, query, key, self.head_size,
+                                     self.cos_sin_cache, self.is_neox_style,
+                                     self.rotary_dim, offsets)
+    else:
+        query, key = ops.rotary_embedding(positions, query, key,
+                                          self.head_size, self.cos_sin_cache,
+                                          self.is_neox_style)
+    return query, key
+
 
 def apply_interleaved_rope(x: torch.Tensor,
                            mrope_section: list[int]) -> torch.Tensor:
@@ -87,8 +88,10 @@ def apply_interleaved_rope(x: torch.Tensor,
     x_t[..., 2:mrope_section[2] * 3:3] = x[2, ..., 2:mrope_section[2] * 3:3]
     return x_t
 
-def vllm_kunlun_apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
-                      is_neox_style: bool) -> torch.Tensor:
+
+def vllm_kunlun_apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor,
+                                 sin: torch.Tensor,
+                                 is_neox_style: bool) -> torch.Tensor:
     """
     Args:
         x: [num_tokens, num_heads, head_size]
@@ -111,13 +114,14 @@ def vllm_kunlun_apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.
     else:
         return torch.stack((o1, o2), dim=-1).flatten(-2)
 
+
 def vllm_kunlun_mrope_forward_cuda(
-        self,
-        positions: torch.Tensor,
-        query: torch.Tensor,
-        key: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """PyTorch-native implementation equivalent to forward().
+    self,
+    positions: torch.Tensor,
+    query: torch.Tensor,
+    key: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """PyTorch-native implementation equivalent to forward().
 
         Args:
             positions:
@@ -126,24 +130,17 @@ def vllm_kunlun_mrope_forward_cuda(
             query: [num_tokens, num_heads * head_size]
             key: [num_tokens, num_kv_heads * head_size]
         """
-        assert positions.ndim == 2
-        assert key is not None
-        
-        query, key = torch.ops.xspeedgate_ops.mrotary_embedding_fwd_v0(
-            query,
-            key,
-            positions.to(dtype=torch.int32),
-            self.cos_sin_cache,
-            self.mrope_interleaved,
-            self.is_neox_style,
-            self.head_size,
-            self.rotary_dim,
-            self.mrope_section[0],
-            self.mrope_section[1],
-            self.mrope_section[2]
-        )
+    assert positions.ndim == 2
+    assert key is not None
 
-        return query, key
+    query, key = torch.ops.xspeedgate_ops.mrotary_embedding_fwd_v0(
+        query, key, positions.to(dtype=torch.int32), self.cos_sin_cache,
+        self.mrope_interleaved, self.is_neox_style, self.head_size,
+        self.rotary_dim, self.mrope_section[0], self.mrope_section[1],
+        self.mrope_section[2])
+
+    return query, key
+
 
 DeepseekScalingRotaryEmbedding_forward = DeepseekScalingRotaryEmbedding.forward
 DeepseekScalingRotaryEmbedding_forward_cuda = DeepseekScalingRotaryEmbedding.forward_cuda
@@ -154,36 +151,38 @@ DeepseekScalingRotaryEmbedding.forward_cuda = DeepseekScalingRotaryEmbedding_for
 MRotaryEmbedding.forward_cuda = vllm_kunlun_mrope_forward_cuda
 MRotaryEmbedding.forward = vllm_kunlun_mrope_forward_cuda
 
+
 def Split_Norm_Rope(
-    qkv: torch.Tensor,
-    cos_sin_cache: torch.Tensor,
-    q_norm_weight: torch.Tensor,
-    k_norm_weight: torch.Tensor,
-    positions: torch.Tensor,
-    max_position_embeddings: int,
-    q_head_num: int,
-    kv_head_num: int,
-    head_dim:int
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        qkv: torch.Tensor, cos_sin_cache: torch.Tensor,
+        q_norm_weight: torch.Tensor, k_norm_weight: torch.Tensor,
+        positions: torch.Tensor, max_position_embeddings: int, q_head_num: int,
+        kv_head_num: int,
+        head_dim: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     num_tokens = qkv.shape[0]
-    rotary_dim=head_dim
-    q_emb_out = torch.empty((num_tokens, q_head_num * head_dim), dtype=qkv.dtype, device=qkv.device)
-    k_emb_out = torch.empty((num_tokens, kv_head_num * head_dim), dtype=qkv.dtype, device=qkv.device)
-    v_out = torch.empty((num_tokens, kv_head_num * head_dim), dtype=qkv.dtype, device=qkv.device)
+    rotary_dim = head_dim
+    q_emb_out = torch.empty((num_tokens, q_head_num * head_dim),
+                            dtype=qkv.dtype,
+                            device=qkv.device)
+    k_emb_out = torch.empty((num_tokens, kv_head_num * head_dim),
+                            dtype=qkv.dtype,
+                            device=qkv.device)
+    v_out = torch.empty((num_tokens, kv_head_num * head_dim),
+                        dtype=qkv.dtype,
+                        device=qkv.device)
     torch.ops._C.split_norm_rope_neox(
-                        q_emb_out,                    
-                        k_emb_out,                     
-                        v_out,                          
-                        qkv,   
-                        cos_sin_cache, 
-                        q_norm_weight,
-                        k_norm_weight,   
-                        positions,  
-                        num_tokens,
-                        max_position_embeddings,                     
-                        q_head_num,                
-                        kv_head_num,               
-                        head_dim,                 
-                        rotary_dim,            
-                    )
-    return  q_emb_out, k_emb_out, v_out
+        q_emb_out,
+        k_emb_out,
+        v_out,
+        qkv,
+        cos_sin_cache,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        num_tokens,
+        max_position_embeddings,
+        q_head_num,
+        kv_head_num,
+        head_dim,
+        rotary_dim,
+    )
+    return q_emb_out, k_emb_out, v_out

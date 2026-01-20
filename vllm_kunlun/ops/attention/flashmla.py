@@ -4,10 +4,9 @@
 from typing import Optional, Tuple
 
 import torch
-
+import xtorch_ops
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
-import xtorch_ops
 
 logger = init_logger(__name__)
 
@@ -36,6 +35,7 @@ def is_flashmla_supported() -> Tuple[bool, Optional[str]]:
     """
     return True, None
 
+
 def get_mla_metadata(
     cache_seqlens: torch.Tensor,
     num_heads_per_head_k: int = 1,
@@ -54,6 +54,7 @@ def get_mla_metadata(
     # return flash_mla_cuda.get_mla_metadata(cache_seqlens, num_heads_per_head_k, num_heads_k)
     cache_seqlens_cpu = cache_seqlens.cpu()
     return cache_seqlens_cpu, cache_seqlens
+
 
 def flash_mla_with_kvcache(
     q: torch.Tensor,
@@ -87,38 +88,46 @@ def flash_mla_with_kvcache(
         softmax_lse: (batch_size, num_heads_q, seq_len_q), torch.float32.
     """
     if softmax_scale is None:
-        softmax_scale = q.shape[-1] ** (-0.5)
+        softmax_scale = q.shape[-1]**(-0.5)
 
     softmax_lse = None
-    out = torch.ones(q.size(0), q.size(1), q.size(2), head_dim_v, dtype= q.dtype, device=q.device)
+    out = torch.ones(q.size(0),
+                     q.size(1),
+                     q.size(2),
+                     head_dim_v,
+                     dtype=q.dtype,
+                     device=q.device)
     kv_lora_rank = head_dim_v
     qk_rope_head_dim = q.size(3) - head_dim_v
     head_dim = k_cache.shape[3]
     page_block_size = k_cache.shape[1]
     k_cache = k_cache.view(-1, 1, page_block_size, head_dim)
-    
+
     # todo: optimize memcp
     # q_c = q[..., : kv_lora_rank].contiguous()
     # q_r = q[..., kv_lora_rank :].contiguous()
-    
+
     is_context = False
     vo_head_dim = -1
-    
-    xtorch_ops.paged_attention(out,
-                               q,
-                               k_cache, None,
-                               block_table,
-                               tile_scheduler_metadata, # context_lens_cpu
-                               num_splits,              # context_lens_xpu
-                               is_context,
-                               causal,
-                               vo_head_dim,
-                               kv_lora_rank,
-                               qk_rope_head_dim,
-                               softmax_scale,
-                               q_r=q)
+
+    xtorch_ops.paged_attention(
+        out,
+        q,
+        k_cache,
+        None,
+        block_table,
+        tile_scheduler_metadata,  # context_lens_cpu
+        num_splits,  # context_lens_xpu
+        is_context,
+        causal,
+        vo_head_dim,
+        kv_lora_rank,
+        qk_rope_head_dim,
+        softmax_scale,
+        q_r=q)
     return out, softmax_lse
-        
+
+
 def kunlun_flash_mla_with_kvcache(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -129,7 +138,7 @@ def kunlun_flash_mla_with_kvcache(
     causal: bool = False,
     is_fp8_kvcache: bool = False,
     indices: Optional[torch.Tensor] = None,
-    max_seq_kv: int = 1, 
+    max_seq_kv: int = 1,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Arguments:
@@ -149,27 +158,31 @@ def kunlun_flash_mla_with_kvcache(
         p_sums:  (batch_size, seq_len_q, num_heads_q), torch.float32.
     """
     assert not is_fp8_kvcache, "By now, the kernel does not support uint8 kv cache."
-    assert q.shape[1] <= 2, "xtorch_ops.fwd_kvcache_mla only support seq_len_q <= 2 for now."
+    assert q.shape[
+        1] <= 2, "xtorch_ops.fwd_kvcache_mla only support seq_len_q <= 2 for now."
     if softmax_scale is None:
-        softmax_scale = q.shape[-1] ** (-0.5)
+        softmax_scale = q.shape[-1]**(-0.5)
     if indices is not None:
         # NOTE (zyongye): sparse attention is also causal
         # since it only attend to the tokens before
         # but here `causal` should not be specified
         assert not causal, \
             "causal must be `false` if sparse attention is enabled."
-    
-    q_r, pe_cache = None, None # 当q_r和pe_cache为空时，为packed模式
+
+    q_r, pe_cache = None, None  # 当q_r和pe_cache为空时，为packed模式
     batch_size, seq_len_q, num_heads_q, head_dim = q.shape
     kv_lora_rank = head_dim_v
     rope_head_dim = head_dim - kv_lora_rank
-    
+
     out = torch.zeros([batch_size, seq_len_q, num_heads_q, kv_lora_rank],
-                        dtype=q.dtype, device=q.device)
+                      dtype=q.dtype,
+                      device=q.device)
     max_logits = torch.zeros([batch_size, seq_len_q, num_heads_q],
-                                dtype=torch.float32, device=q.device)
+                             dtype=torch.float32,
+                             device=q.device)
     p_sums = torch.zeros([batch_size, seq_len_q, num_heads_q],
-                            dtype=torch.float32, device=q.device)
+                         dtype=torch.float32,
+                         device=q.device)
 
     xtorch_ops.fwd_kvcache_mla(
         q_c=q,
@@ -185,7 +198,7 @@ def kunlun_flash_mla_with_kvcache(
         p_sums=p_sums,
         kv_lod_xpu=cache_seqlens,
     )
-    
+
     return out, max_logits, p_sums
 
 
@@ -219,7 +232,7 @@ def flash_mla_sparse_prefill(
     - lse: [s_q, h_q], float, 2-based log-sum-exp
     """
     s_q, h_q, d_qk = q.shape
-    
+
     out = torch.zeros([s_q, h_q, d_v], dtype=q.dtype, device=q.device)
     max_logits = torch.zeros([s_q, h_q], dtype=torch.float32, device=q.device)
     lse = torch.zeros([s_q, h_q], dtype=torch.float32, device=q.device)
@@ -234,13 +247,13 @@ def flash_mla_sparse_prefill(
         kvlod_xpu=q_lod_xpu,
         sm_scale=sm_scale,
         d_v=d_v,
-        is_causal=True, #aiak这个值为true，这是为啥
+        is_causal=True,  #aiak这个值为true，这是为啥
         out=out,
         max_logits=max_logits,
         lse=lse,
     )
-    
-    # NOTE: Compared with torch.ops._flashmla_C.sparse_prefill_fwd, 
+
+    # NOTE: Compared with torch.ops._flashmla_C.sparse_prefill_fwd,
     # out_scale = 1 / math.log2(math.e)
     # gpu_max_logits * out_scale = kunlun_lse
     # gpu_lse * out_scale = kunlun_lse

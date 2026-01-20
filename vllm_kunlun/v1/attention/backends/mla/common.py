@@ -193,10 +193,9 @@ from dataclasses import dataclass, field
 from typing import Generic, Optional, TypeVar, Union
 
 import torch
-from tqdm import tqdm
-
 import vllm.envs as envs
-import vllm_kunlun.platforms.envs as vllm_kunlun_envs
+import xtorch_ops
+from tqdm import tqdm
 from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionLayer,
                                               AttentionMetadata,
@@ -207,7 +206,6 @@ from vllm.attention.ops.merge_attn_states import merge_attn_states
 from vllm.attention.utils.fa_utils import get_flash_attn_version
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.distributed.parallel_state import get_dcp_group, is_global_first_rank
-from vllm.distributed import get_tp_group
 from vllm.logger import init_logger
 from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                LinearBase,
@@ -221,7 +219,8 @@ from vllm.v1.attention.backends.utils import (AttentionMetadataBuilder,
                                               infer_global_hyperparameters,
                                               split_decodes_and_prefills)
 from vllm.v1.kv_cache_interface import AttentionSpec
-import xtorch_ops
+
+import vllm_kunlun.platforms.envs as vllm_kunlun_envs
 
 try:
     from vllm.vllm_flash_attn import flash_attn_varlen_func
@@ -234,8 +233,8 @@ except ImportError:
 
 try:
     from flashinfer import BatchPrefillWithRaggedKVCacheWrapper
-    from flashinfer.prefill import (  # noqa: F401
-        cudnn_batch_prefill_with_kv_cache)
+    from flashinfer.prefill import \
+        cudnn_batch_prefill_with_kv_cache  # noqa: F401
     flashinfer_available = True
 except ImportError:
     flashinfer_available = False
@@ -1100,29 +1099,31 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
                 q_len = x.shape[0]
                 extra_params = {"trans": False}
                 sorted_tokens_num_lod = torch.arange(
-                    self.num_heads + 1, dtype=torch.int, device="cuda"
-                ) * q_len
-                sorted_tokens_idx = torch.arange(
-                    self.num_heads * q_len, dtype=torch.int, device="cuda")
+                    self.num_heads + 1, dtype=torch.int, device="cuda") * q_len
+                sorted_tokens_idx = torch.arange(self.num_heads * q_len,
+                                                 dtype=torch.int,
+                                                 device="cuda")
                 xtorch_ops.mla_bmm_I8(
                     x.contiguous(),  # [1, 16, 512] torch.float16
-                    self.W_UV, # [16, 128, 512] torch.int8
-                    self.W_UV_SCALE, # [2048, 1] torch.float32
-                    out, # [1, 16, 128] torch.float16
-                    sorted_tokens_num_lod, # [17]
-                    sorted_tokens_idx, # [16]
-                    **extra_params
-                )
+                    self.W_UV,  # [16, 128, 512] torch.int8
+                    self.W_UV_SCALE,  # [2048, 1] torch.float32
+                    out,  # [1, 16, 128] torch.float16
+                    sorted_tokens_num_lod,  # [17]
+                    sorted_tokens_idx,  # [16]
+                    **extra_params)
                 # out_new = out.reshape(-1, self.num_heads * self.v_head_dim)
                 # out.resize_(origin_out_shape)
                 # out.copy_(out_new)
             else:
-                x = x.view(-1, self.num_heads, self.kv_lora_rank).transpose(0, 1)
+                x = x.view(-1, self.num_heads,
+                           self.kv_lora_rank).transpose(0, 1)
                 # Convert from (B, N * V) to (N, B, V)
-                out = out.view(-1, self.num_heads, self.v_head_dim).transpose(0, 1)
+                out = out.view(-1, self.num_heads,
+                               self.v_head_dim).transpose(0, 1)
 
                 # Multiply (N, B, L) x (N, L, V) -> (N, B, V)
-                torch.bmm(x, self.W_UV, out=out)  # Reuse "out" to make it "hot"
+                torch.bmm(x, self.W_UV,
+                          out=out)  # Reuse "out" to make it "hot"
 
                 # Convert from (N, B, V) to (B, N * V)
                 out_new = out.transpose(0, 1).reshape(
@@ -1215,29 +1216,30 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
         # )
         attn_out = torch.empty_like(q)
         ds_alpha = 1.8738542070926265
-        tp_q_head_num=128
-        softmax_lse = torch.zeros(tp_q_head_num, q.size(0), dtype=torch.float32, device=q.device)
+        tp_q_head_num = 128
+        softmax_lse = torch.zeros(tp_q_head_num,
+                                  q.size(0),
+                                  dtype=torch.float32,
+                                  device=q.device)
         softmax_lse.fill_(float('-inf'))
-        xtorch_ops.attention(
-            q=q,
-            k_cache=k,
-            v_cache=maybe_padded_v,
-            out=attn_out,
-            is_causal=causal,
-            is_prefill=True,
-            prefill_len=0,
-            k_perchannel_scale=None,
-            v_perchannel_scale=None,
-            smooth=None,
-            context_seq_lod_cpu=context_seq_lod_cpu,
-            context_seq_lod_xpu=context_seq_lod_xpu,
-            slot_mapping_cpu=None,
-            slot_mapping_xpu=None,
-            v_trans=False,
-            v_trans_threshold=0,
-            alpha=ds_alpha,
-            softmax_lse=softmax_lse
-        )
+        xtorch_ops.attention(q=q,
+                             k_cache=k,
+                             v_cache=maybe_padded_v,
+                             out=attn_out,
+                             is_causal=causal,
+                             is_prefill=True,
+                             prefill_len=0,
+                             k_perchannel_scale=None,
+                             v_perchannel_scale=None,
+                             smooth=None,
+                             context_seq_lod_cpu=context_seq_lod_cpu,
+                             context_seq_lod_xpu=context_seq_lod_xpu,
+                             slot_mapping_cpu=None,
+                             slot_mapping_xpu=None,
+                             v_trans=False,
+                             v_trans_threshold=0,
+                             alpha=ds_alpha,
+                             softmax_lse=softmax_lse)
 
         # Unpack the output if there is multiple results
         lse = None
@@ -1364,7 +1366,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 f" {WEIGHT_NAMES}.")
 
         def get_layer_weight_scale(layer):
-            WEIGHT_SCALE_NAMES = ("weight_scale",)
+            WEIGHT_SCALE_NAMES = ("weight_scale", )
             for attr in WEIGHT_SCALE_NAMES:
                 if hasattr(layer, attr):
                     return getattr(layer, attr)
@@ -1392,25 +1394,26 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
             assert kv_b_proj_weight.dtype == torch.int8, \
                 f"weight type {kv_b_proj_weight.dtype} not support for int8 MLA BMM"
             W_UK, W_UV = kv_b_proj_weight.unflatten(
-                0, (-1, self.qk_nope_head_dim + self.v_head_dim)
-                ).split([self.qk_nope_head_dim, self.v_head_dim], dim=1)
+                0, (-1, self.qk_nope_head_dim + self.v_head_dim)).split(
+                    [self.qk_nope_head_dim, self.v_head_dim], dim=1)
             W_UK_SCALE, W_UV_SCALE = kv_b_proj_weight_scale.unflatten(
-                0, (-1, self.qk_nope_head_dim + self.v_head_dim)
-                ).split([self.qk_nope_head_dim, self.v_head_dim], dim=1)
+                0, (-1, self.qk_nope_head_dim + self.v_head_dim)).split(
+                    [self.qk_nope_head_dim, self.v_head_dim], dim=1)
             W_UK_SCALE = W_UK_SCALE / 127.0
             w_uk_dq = W_UK.contiguous().cpu().to(torch.bfloat16).to(kv_b_proj_weight.device) \
                     * W_UK_SCALE.contiguous().to(torch.bfloat16)
             w_uk_dq_trans = w_uk_dq.transpose(1, 2).contiguous()
             self.W_UK_T = W_UK.transpose(1, 2).contiguous()
             self.W_UK_SCALE = torch.empty([W_UK.shape[0] * W_UK.shape[2], 1],
-                            dtype=torch.float, device=kv_b_proj_weight.device)
+                                          dtype=torch.float,
+                                          device=kv_b_proj_weight.device)
             xtorch_ops.quant2d(w_uk_dq_trans, self.W_UK_T, self.W_UK_SCALE)
             self.W_UV = W_UV.contiguous()
             self.W_UV_SCALE = W_UV_SCALE.contiguous().reshape(-1, 1)
         else:
-        # we currently do not have quantized bmm's which are needed for
-        # `W_UV` and `W_UK_T`, we just store fp16/bf16 copies and perform
-        # the bmm's in 16-bit, the extra memory overhead of this is fairly low
+            # we currently do not have quantized bmm's which are needed for
+            # `W_UV` and `W_UK_T`, we just store fp16/bf16 copies and perform
+            # the bmm's in 16-bit, the extra memory overhead of this is fairly low
             kv_b_proj_weight = get_and_maybe_dequant_weights(self.kv_b_proj).T
             assert kv_b_proj_weight.shape == (
                 self.kv_lora_rank,
@@ -1455,19 +1458,19 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                                     dtype=torch.bfloat16,
                                     device=self.W_K.device)
                     aiter_triton_fp8_bmm(x,
-                                        self.W_K,
-                                        self.W_K_scale,
-                                        group_size=128,
-                                        transpose_bm=True)
+                                         self.W_K,
+                                         self.W_K_scale,
+                                         group_size=128,
+                                         transpose_bm=True)
 
                     x = torch.empty((self.W_V.shape[0], m, self.W_V.shape[2]),
                                     dtype=torch.bfloat16,
                                     device=self.W_V.device)
                     aiter_triton_fp8_bmm(x,
-                                        self.W_V,
-                                        self.W_V_scale,
-                                        group_size=128,
-                                        transpose_bm=True)
+                                         self.W_V,
+                                         self.W_V_scale,
+                                         group_size=128,
+                                         transpose_bm=True)
             else:
                 # Convert from (L, N, V) to (N, L, V)
                 self.W_UV = W_UV.transpose(0, 1)
@@ -1475,16 +1478,15 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 self.W_UK_T = W_UK.permute(1, 2, 0)
 
     def gather_and_maybe_dequant_cache_py_optimized(
-        self,
-        src_cache: torch.Tensor,
-        dst: torch.Tensor,
-        block_table: torch.Tensor,
-        cu_seq_lens: torch.Tensor,
-        batch_size: int,
-        kv_cache_dtype: str,
-        scale: torch.Tensor,
-        seq_starts: Optional[torch.Tensor] = None
-    ) -> None:
+            self,
+            src_cache: torch.Tensor,
+            dst: torch.Tensor,
+            block_table: torch.Tensor,
+            cu_seq_lens: torch.Tensor,
+            batch_size: int,
+            kv_cache_dtype: str,
+            scale: torch.Tensor,
+            seq_starts: Optional[torch.Tensor] = None) -> None:
         device = src_cache.device
         num_blocks, block_size, head_dim = src_cache.shape
         tot_tokens = dst.shape[0]
@@ -1517,10 +1519,8 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
 
         valid_mask = block_ids >= 0
         linear_indices = torch.where(
-            valid_mask,
-            block_ids * block_size + slot_ids,
-            torch.zeros_like(block_ids, device=device)
-        )
+            valid_mask, block_ids * block_size + slot_ids,
+            torch.zeros_like(block_ids, device=device))
 
         if kv_cache_dtype == 'auto':
             gathered = src_cache_2d[linear_indices.long()]
@@ -1872,24 +1872,23 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 if vllm_kunlun_envs.VLLM_KUNLUN_ENABLE_INT8_BMM:
                     q_len = decode_q_nope.shape[0]
                     decode_ql_nope = decode_q_nope.new_empty(
-                        q_len, self.num_heads, self.kv_lora_rank,
+                        q_len,
+                        self.num_heads,
+                        self.kv_lora_rank,
                         dtype=torch.float16,
                     )
-                    sorted_tokens_num_lod = torch.arange(
-                        self.num_heads + 1, dtype=torch.int, device="cuda"
-                    ) * q_len
-                    sorted_tokens_idx = torch.arange(
-                        self.num_heads * q_len, dtype=torch.int, device="cuda")
+                    sorted_tokens_num_lod = torch.arange(self.num_heads + 1,
+                                                         dtype=torch.int,
+                                                         device="cuda") * q_len
+                    sorted_tokens_idx = torch.arange(self.num_heads * q_len,
+                                                     dtype=torch.int,
+                                                     device="cuda")
                     extra_params = {"trans": False}
-                    xtorch_ops.mla_bmm_I8(
-                        decode_q_nope.contiguous(),
-                        self.W_UK_T,
-                        self.W_UK_SCALE,
-                        decode_ql_nope,
-                        sorted_tokens_num_lod,
-                        sorted_tokens_idx,
-                        **extra_params
-                    )
+                    xtorch_ops.mla_bmm_I8(decode_q_nope.contiguous(),
+                                          self.W_UK_T, self.W_UK_SCALE,
+                                          decode_ql_nope,
+                                          sorted_tokens_num_lod,
+                                          sorted_tokens_idx, **extra_params)
                 else:
                     # Convert from (B, N, P) to (N, B, P)
                     decode_q_nope = decode_q_nope.transpose(0, 1)

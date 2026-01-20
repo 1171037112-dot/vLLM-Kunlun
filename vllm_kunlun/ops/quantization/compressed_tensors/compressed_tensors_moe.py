@@ -19,9 +19,8 @@
 from typing import Callable, Optional, Union
 
 import torch
-from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import (
-    CompressedTensorsW8A8Int8MoEMethod,
-)
+from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import \
+    CompressedTensorsW8A8Int8MoEMethod
 
 
 def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
@@ -58,14 +57,19 @@ def apply(
     global_num_experts, up_gate_size, _ = layer.w13_weight.shape
     M, N = hidden_states.shape
     hidden_dim = layer.w2_weight.shape[1]
-    normed_score = torch.empty(
-        M, top_k, dtype=torch.float32, device=hidden_states.device
-    )
-    topk_ids = torch.empty(M, top_k, dtype=torch.int32, device=hidden_states.device)
+    normed_score = torch.empty(M,
+                               top_k,
+                               dtype=torch.float32,
+                               device=hidden_states.device)
+    topk_ids = torch.empty(M,
+                           top_k,
+                           dtype=torch.int32,
+                           device=hidden_states.device)
     num_blocks = 12
-    block_statistic = torch.zeros(
-        num_blocks, global_num_experts, dtype=torch.int32, device=hidden_states.device
-    )
+    block_statistic = torch.zeros(num_blocks,
+                                  global_num_experts,
+                                  dtype=torch.int32,
+                                  device=hidden_states.device)
 
     router_logits = router_logits.float()
     if scoring_func == "softmax":
@@ -89,17 +93,17 @@ def apply(
         )
 
     moe_expand = torch.empty(
-        (M * top_k, N), dtype=hidden_states.dtype, device=hidden_states.device
-    )  # [M, top_k, N], float
-    expert_m = torch.zeros(
-        global_num_experts, dtype=torch.int32, device=hidden_states.device
-    )  # [E]
-    sorted_tokens_num_lod = torch.zeros(
-        global_num_experts + 1, dtype=torch.int32, device=hidden_states.device
-    )  # [E+1]
-    sorted_tokens_idx = torch.zeros(
-        M * top_k, dtype=torch.int32, device=hidden_states.device
-    )
+        (M * top_k, N), dtype=hidden_states.dtype,
+        device=hidden_states.device)  # [M, top_k, N], float
+    expert_m = torch.zeros(global_num_experts,
+                           dtype=torch.int32,
+                           device=hidden_states.device)  # [E]
+    sorted_tokens_num_lod = torch.zeros(global_num_experts + 1,
+                                        dtype=torch.int32,
+                                        device=hidden_states.device)  # [E+1]
+    sorted_tokens_idx = torch.zeros(M * top_k,
+                                    dtype=torch.int32,
+                                    device=hidden_states.device)
 
     torch.ops._C.gen_block_statistic(topk_ids, block_statistic)
 
@@ -125,9 +129,9 @@ def apply(
 
     x_shape = moe_expand.shape
     x_q = torch.empty(x_shape, dtype=torch.int8, device=moe_expand.device)
-    x_scale = torch.empty(
-        (x_shape[0], 1), dtype=torch.float32, device=moe_expand.device
-    )
+    x_scale = torch.empty((x_shape[0], 1),
+                          dtype=torch.float32,
+                          device=moe_expand.device)
     torch.ops._C.quant2d(moe_expand, x_q, x_scale, force_sdnn=True)
 
     torch.ops._C.moe_fc(
@@ -145,7 +149,7 @@ def apply(
     )
 
     d = y.shape[-1] // 2
-    output_shape = y.shape[:-1] + (d,)
+    output_shape = y.shape[:-1] + (d, )
     out1 = torch.empty(output_shape, dtype=y.dtype, device=y.device)
     torch.ops._C.silu_and_mul(out1, y)
 
@@ -160,9 +164,9 @@ def apply(
     out1 = out1.reshape(-1, out1.shape[-1])
     x_shape = out1.shape
     x_q = torch.empty(x_shape, dtype=torch.int8, device=moe_expand.device)
-    x_scale = torch.empty(
-        (x_shape[0], 1), dtype=torch.float32, device=moe_expand.device
-    )
+    x_scale = torch.empty((x_shape[0], 1),
+                          dtype=torch.float32,
+                          device=moe_expand.device)
     torch.ops._C.quant2d(out1, x_q, x_scale, force_sdnn=True)
 
     torch.ops._C.moe_fc(
@@ -179,8 +183,12 @@ def apply(
         act=None,
     )
 
-    dequant_scale = torch.ones([M, top_k], dtype=torch.float32, device=out.device)
-    output = torch.empty([M, N], dtype=hidden_states.dtype, device=hidden_states.device)
+    dequant_scale = torch.ones([M, top_k],
+                               dtype=torch.float32,
+                               device=out.device)
+    output = torch.empty([M, N],
+                         dtype=hidden_states.dtype,
+                         device=hidden_states.device)
     sorted_tokens_idx = sorted_tokens_idx.view(M, top_k)
 
     torch.ops._C.moe_post(
@@ -194,6 +202,5 @@ def apply(
 
 
 CompressedTensorsW8A8Int8MoEMethod.process_weights_after_loading = (
-    process_weights_after_loading
-)
+    process_weights_after_loading)
 CompressedTensorsW8A8Int8MoEMethod.apply = apply

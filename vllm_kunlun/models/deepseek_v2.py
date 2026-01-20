@@ -29,32 +29,24 @@ from itertools import islice
 from typing import Any, Optional, Union
 
 import torch
-from torch.library import custom_op
 from torch import nn
+from torch.library import custom_op
 from transformers import DeepseekV2Config, DeepseekV3Config
-
-from vllm_kunlun.ops.attention.layer import Attention
-from vllm.attention.backends.abstract import AttentionBackend
 from vllm.attention.ops.common import pack_seq_triton, unpack_seq_triton
 from vllm.compilation.decorators import support_torch_compile
-from vllm.config import (CacheConfig, ParallelConfig, VllmConfig,
-                         get_current_vllm_config)
+from vllm.config import CacheConfig, ParallelConfig, VllmConfig
 from vllm.distributed import (get_ep_group, get_pp_group,
                               get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_gather)
 from vllm.forward_context import get_forward_context
 from vllm.logger import init_logger
-from vllm_kunlun.ops.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import FusedMoE
-from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.layers.layernorm import LayerNorm, RMSNorm
 from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                MergedColumnParallelLinear,
                                                RowParallelLinear)
-from vllm_kunlun.ops.linear import ReplicatedLinear
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
-from vllm_kunlun.ops.attention.mla import MLAModules, MultiHeadLatentAttention
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.shared_fused_moe import SharedFusedMoE
@@ -62,29 +54,34 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead, VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import (
     default_weight_loader, maybe_remap_kv_scale_name)
-from vllm.model_executor.models.utils import sequence_parallel_chunk
+from vllm.model_executor.models.deepseek_v2 import DeepseekV32IndexerCache
+from vllm.model_executor.models.interfaces import (MixtureOfExperts,
+                                                   SupportsLoRA, SupportsPP)
+from vllm.model_executor.models.utils import (
+    PPMissingLayer, is_pp_missing_parameter,
+    make_empty_intermediate_tensors_factory, make_layers, maybe_prefix,
+    sequence_parallel_chunk)
 from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
-from vllm.utils import cdiv, direct_register_custom_op
-from vllm_kunlun.ops.deep_gemm import int8_mqa_logits, int8_paged_mqa_logits
-from vllm.v1.attention.backends.mla.indexer import DeepseekV32IndexerBackend
-from vllm_kunlun.v1.attention.backends.mla.indexer import DeepseekV32IndexerMetadata
-from vllm.v1.kv_cache_interface import KVCacheSpec, MLAAttentionSpec
+from vllm.utils import cdiv
 
-from vllm.model_executor.models.interfaces import MixtureOfExperts, SupportsLoRA, SupportsPP
-from vllm.model_executor.models.utils import (PPMissingLayer, is_pp_missing_parameter,
-                    make_empty_intermediate_tensors_factory, make_layers,
-                    maybe_prefix)
-from vllm.model_executor.models.deepseek_v2 import DeepseekV32IndexerCache
+from vllm_kunlun.ops.activation import SiluAndMul
+from vllm_kunlun.ops.attention.layer import Attention
+from vllm_kunlun.ops.attention.mla import MLAModules, MultiHeadLatentAttention
+from vllm_kunlun.ops.deep_gemm import int8_mqa_logits, int8_paged_mqa_logits
+from vllm_kunlun.ops.linear import ReplicatedLinear
+from vllm_kunlun.v1.attention.backends.mla.indexer import \
+    DeepseekV32IndexerMetadata
 
 if current_platform.is_cuda_alike():
-    from vllm import _custom_ops as ops
+    pass
 elif current_platform.is_xpu():
-    from vllm._ipex_ops import ipex_ops as ops
-    
-import xspeedgate_ops
+    pass
+
+
 _is_kunlun = True
 logger = init_logger(__name__)
+
 
 class DeepseekV2MLP(nn.Module):
 
@@ -442,6 +439,7 @@ class DeepseekV2Attention(nn.Module):
         output, _ = self.o_proj(attn_output)
         return output
 
+
 @torch.inference_mode()
 def cp_gather_indexer_k_quant_cache(
     kv_cache,  # [num_blocks, block_size, head_dim + 1]
@@ -495,9 +493,10 @@ def cp_gather_indexer_k_quant_cache(
     gather_scale = gather_scale.view(torch.float32)
     return gather_value, gather_scale
 
+
 @torch.inference_mode()
 def kunlun_indexer_k_quant_cache(
-    k, #[num_tokens, head_dim]
+    k,  #[num_tokens, head_dim]
     kv_cache,  # [num_blocks, cache_block_size, head_dim + 1]
     slot_mapping,  # [num_tokens]
     quant_block_size,
@@ -521,18 +520,22 @@ def kunlun_indexer_k_quant_cache(
     )
 
     torch.ops._C.quant2d(k, k_fp8, k_scale, force_sdnn=True)
-    k_scale /= 127        
+    k_scale /= 127
     for token_idx in range(num_tokens):
         slot_idx = slot_mapping[token_idx]
         if slot_idx < 0:
             continue
-        block_idx = slot_idx // cache_block_size 
+        block_idx = slot_idx // cache_block_size
         block_offset = slot_idx % cache_block_size
         v_offset = block_offset * head_dim
-        kv_cache[block_idx, v_offset:v_offset + head_dim] = k_fp8[token_idx, :].view(torch.uint8).contiguous()
+        kv_cache[block_idx,
+                 v_offset:v_offset + head_dim] = k_fp8[token_idx, :].view(
+                     torch.uint8).contiguous()
         s_offset = cache_block_size * head_dim + block_offset * 4
-        kv_cache[block_idx, s_offset:s_offset + 4] = k_scale[token_idx, :].view(torch.uint8).contiguous()
+        kv_cache[block_idx, s_offset:s_offset +
+                 4] = k_scale[token_idx, :].view(torch.uint8).contiguous()
     kv_cache = kv_cache.view(num_blocks, cache_block_size, cache_stride)
+
 
 @custom_op("vllm::sparse_attn_indexer_vllm_kunlun", mutates_args=())
 def sparse_attn_indexer_vllm_kunlun(
@@ -603,7 +606,7 @@ def sparse_attn_indexer_vllm_kunlun(
                 chunk.num_reqs,
                 head_dim,
             )
-        
+
             logits = int8_mqa_logits(
                 q_fp8[chunk.token_start:chunk.token_end],
                 (k_fp8, k_scale),
@@ -710,7 +713,10 @@ def sparse_attn_indexer_vllm_kunlun_fake(
 ) -> None:
     return
 
-sparse_attn_indexer_vllm_kunlun.register_fake(sparse_attn_indexer_vllm_kunlun_fake)
+
+sparse_attn_indexer_vllm_kunlun.register_fake(
+    sparse_attn_indexer_vllm_kunlun_fake)
+
 
 class Indexer(nn.Module):
 
@@ -764,11 +770,12 @@ class Indexer(nn.Module):
             prefix=f"{prefix}.k_cache",
             cache_config=cache_config)
         self.max_model_len = vllm_config.model_config.max_model_len
-        if self.max_model_len % cache_config.block_size != 0: #由于I8_paged_mqa_logits输入参数的限制，最大长度必须为block_zise的整数倍
-            self.max_model_len = self.max_model_len + cache_config.block_size - (self.max_model_len % cache_config.block_size)
+        if self.max_model_len % cache_config.block_size != 0:  #由于I8_paged_mqa_logits输入参数的限制，最大长度必须为block_zise的整数倍
+            self.max_model_len = self.max_model_len + cache_config.block_size - (
+                self.max_model_len % cache_config.block_size)
         self.prefix = prefix
-        from vllm.v1.attention.backends.mla.indexer import (
-            get_max_prefill_buffer_size)
+        from vllm.v1.attention.backends.mla.indexer import \
+            get_max_prefill_buffer_size
         self.max_total_seq_len = get_max_prefill_buffer_size(vllm_config)
 
     def forward(self, hidden_states: torch.Tensor, qr: torch.Tensor, positions,
@@ -806,7 +813,7 @@ class Indexer(nn.Module):
         weights, _ = self.weights_proj(hidden_states)
         weights = weights * self.n_head**-0.5
         weights = weights * q_scale * self.softmax_scale
-        
+
         torch.ops.vllm.sparse_attn_indexer_vllm_kunlun(
             hidden_states,
             self.k_cache.prefix,

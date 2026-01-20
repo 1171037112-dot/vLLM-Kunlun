@@ -1,19 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from typing import Optional
 
 import torch
 import torch.nn as nn
-from packaging import version
-
-from vllm import envs
-from vllm.logger import init_logger
-from vllm.platforms import current_platform
 import xtorch_ops
-import os
+from vllm.logger import init_logger
 
 logger = init_logger(__name__)
+
 
 class TopKTopPSampler(nn.Module):
     """
@@ -26,8 +23,7 @@ class TopKTopPSampler(nn.Module):
     def __init__(self, logprobs_mode):
         super().__init__()
         self.logprobs_mode = logprobs_mode
-        logger.info_once(
-            "Using FlashInfer for top-p & top-k sampling.")
+        logger.info_once("Using FlashInfer for top-p & top-k sampling.")
         self.forward = self.forward_kunlun
         self.apply_top_k_top_p = apply_top_k_top_p
 
@@ -62,11 +58,9 @@ class TopKTopPSampler(nn.Module):
         """More optimized implementation for top-k and top-p sampling."""
         if (k is None and p is None) or generators:
             if generators:
-                logger.debug_once(
-                    "FlashInfer 0.2.3+ does not support "
-                    "per-request generators. Falling back to "
-                    "PyTorch-native implementation."
-                )
+                logger.debug_once("FlashInfer 0.2.3+ does not support "
+                                  "per-request generators. Falling back to "
+                                  "PyTorch-native implementation.")
             return self.forward_native(logits, generators, k, p)
         # flashinfer sampling functions expect contiguous logits.
         # In flex_attn/triton_attn fp32 inference, logits can be non-contiguous
@@ -116,6 +110,7 @@ def apply_top_k_top_p(
     logits = logits_sort.scatter(dim=-1, index=logits_idx, src=logits_sort)
     return logits
 
+
 def apply_top_k_only(
     logits: torch.Tensor,
     k: torch.Tensor,
@@ -139,6 +134,7 @@ def apply_top_k_only(
     top_k_mask.masked_fill_(no_top_k_mask.unsqueeze(1), -float("inf"))
     logits.masked_fill_(logits < top_k_mask, -float("inf"))
     return logits
+
 
 def random_sample(
     probs: torch.Tensor,
@@ -194,7 +190,7 @@ def flashinfer_sample(
     if k is None:
         # Top-p only.
         next_token_ids = xtorch_ops.top_p_sampling_from_probs(
-            probs,top_p=p, deterministic=True)
+            probs, top_p=p, deterministic=True)
     elif p is None:
         # Top-k only.
         next_token_ids = xtorch_ops.top_k_sampling_from_probs(

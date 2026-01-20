@@ -1,79 +1,83 @@
 """layer.py"""
 
-from contextlib import nullcontext
-from typing import Callable, Optional, Union, get_args
+from typing import Callable, Optional
 
 import torch
-from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
-    should_ignore_layer,
-)
-from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.fused_moe import FusedMoE
-from vllm.model_executor.layers.fused_moe.layer import UnquantizedFusedMoEMethod
+from vllm.model_executor.layers.fused_moe.layer import \
+    UnquantizedFusedMoEMethod
+from vllm.model_executor.layers.quantization.base_config import \
+    QuantizationConfig
+from vllm.model_executor.layers.quantization.compressed_tensors.utils import \
+    should_ignore_layer
+
 
 def apply(
-        self,
-        layer: torch.nn.Module,
-        x: torch.Tensor,
-        router_logits: torch.Tensor,
-        top_k: int,
-        renormalize: bool,
-        use_grouped_topk: bool = False,
-        topk_group: Optional[int] = None,
-        num_expert_group: Optional[int] = None,
-        global_num_experts: int = -1,
-        expert_map: Optional[torch.Tensor] = None,
-        custom_routing_function: Optional[Callable] = None,
-        scoring_func: str = "softmax",
-        routed_scaling_factor: float = 1.0,
-        e_score_correction_bias: Optional[torch.Tensor] = None,
-        apply_router_weight_on_input: bool = False,
-        activation: str = "silu",
-        enable_eplb: bool = False,
-        expert_load_view: Optional[torch.Tensor] = None,
-        logical_to_physical_map: Optional[torch.Tensor] = None,
-        logical_replica_count: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """apply"""
-        if enable_eplb:
-            raise NotImplementedError(
-                "EPLB not supported for `UnquantizedFusedMoEMethod` yet.")
-        
-        """forward_kunlun"""
-        from vllm_kunlun.ops._kunlun_ops import KunlunOps as ops
-        if self.moe.use_ep:
-            return ops.fused_moe_ep(x,
-                             layer.w13_weight,
-                             layer.w2_weight,
-                             router_logits,
-                             self.moe.ep_rank,
-                             top_k,
-                             renormalize=renormalize,
-                             inplace=True,
-                             use_grouped_topk=use_grouped_topk,
-                             num_expert_group=num_expert_group,
-                             topk_group=topk_group)
-        else:
-            return ops.fused_moe(x,
-                             layer.w13_weight,
-                             layer.w2_weight,
-                             router_logits,
-                             self.moe.ep_rank,
-                             top_k,
-                             renormalize=renormalize,
-                             inplace=True,
-                             use_grouped_topk=use_grouped_topk,
-                             num_expert_group=num_expert_group,
-                             topk_group=topk_group,
-                             scoring_func=scoring_func,
-                             e_score_correction_bias=e_score_correction_bias,
-                             w1_bias=getattr(layer, 'w13_bias', None),
-                             w2_bias=getattr(layer, 'w2_bias', None),
-                             )
+    self,
+    layer: torch.nn.Module,
+    x: torch.Tensor,
+    router_logits: torch.Tensor,
+    top_k: int,
+    renormalize: bool,
+    use_grouped_topk: bool = False,
+    topk_group: Optional[int] = None,
+    num_expert_group: Optional[int] = None,
+    global_num_experts: int = -1,
+    expert_map: Optional[torch.Tensor] = None,
+    custom_routing_function: Optional[Callable] = None,
+    scoring_func: str = "softmax",
+    routed_scaling_factor: float = 1.0,
+    e_score_correction_bias: Optional[torch.Tensor] = None,
+    apply_router_weight_on_input: bool = False,
+    activation: str = "silu",
+    enable_eplb: bool = False,
+    expert_load_view: Optional[torch.Tensor] = None,
+    logical_to_physical_map: Optional[torch.Tensor] = None,
+    logical_replica_count: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """apply"""
+    if enable_eplb:
+        raise NotImplementedError(
+            "EPLB not supported for `UnquantizedFusedMoEMethod` yet.")
+    """forward_kunlun"""
+    from vllm_kunlun.ops._kunlun_ops import KunlunOps as ops
+    if self.moe.use_ep:
+        return ops.fused_moe_ep(x,
+                                layer.w13_weight,
+                                layer.w2_weight,
+                                router_logits,
+                                self.moe.ep_rank,
+                                top_k,
+                                renormalize=renormalize,
+                                inplace=True,
+                                use_grouped_topk=use_grouped_topk,
+                                num_expert_group=num_expert_group,
+                                topk_group=topk_group)
+    else:
+        return ops.fused_moe(
+            x,
+            layer.w13_weight,
+            layer.w2_weight,
+            router_logits,
+            self.moe.ep_rank,
+            top_k,
+            renormalize=renormalize,
+            inplace=True,
+            use_grouped_topk=use_grouped_topk,
+            num_expert_group=num_expert_group,
+            topk_group=topk_group,
+            scoring_func=scoring_func,
+            e_score_correction_bias=e_score_correction_bias,
+            w1_bias=getattr(layer, 'w13_bias', None),
+            w2_bias=getattr(layer, 'w2_bias', None),
+        )
+
 
 UnquantizedFusedMoEMethod.apply = apply
 
+
 class VllmFusedMoE(FusedMoE):
+
     def __init__(
         self,
         num_experts: int,  # Global number of experts
@@ -136,18 +140,17 @@ class VllmFusedMoE(FusedMoE):
         self.register_parameter("w13_bias", None)
         self.register_parameter("w2_bias", None)
 
-        if (self.quant_config is None) or (
-            should_ignore_layer(
+        if (self.quant_config is None) or (should_ignore_layer(
                 prefix,
                 ignore=self.quant_config.ignore,
                 fused_mapping=self.quant_config.packed_modules_mapping,
-            )
-        ):
+        )):
             self.quant_method = UnquantizedFusedMoEMethod(self.moe_config)
             moe_quant_params = {
                 "num_experts": self.local_num_experts,
                 "hidden_size": hidden_size,
-                "intermediate_size_per_partition": self.intermediate_size_per_partition,
+                "intermediate_size_per_partition":
+                self.intermediate_size_per_partition,
                 "params_dtype": params_dtype,
                 "weight_loader": self.weight_loader,
             }

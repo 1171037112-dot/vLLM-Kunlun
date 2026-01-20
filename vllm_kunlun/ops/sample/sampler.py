@@ -11,7 +11,6 @@ from typing import Optional, Union
 import msgspec
 import torch
 import torch.nn as nn
-
 import vllm.envs as envs
 from vllm.model_executor.layers.utils import apply_penalties
 from vllm.model_executor.sampling_metadata import (SamplingMetadata,
@@ -24,8 +23,8 @@ from vllm.sequence import (VLLM_INVALID_TOKEN_ID,
 
 if envs.VLLM_USE_FLASHINFER_SAMPLER and find_spec("flashinfer"):
     # yapf: disable
-    from flashinfer.sampling import (
-        top_k_top_p_sampling_from_probs as flashinfer_top_k_top_p_sampling)
+    from flashinfer.sampling import \
+        top_k_top_p_sampling_from_probs as flashinfer_top_k_top_p_sampling
 
     # yapf: enable
 else:
@@ -348,8 +347,9 @@ class Sampler(nn.Module):
         logits_idx = None
 
         if do_top_p_top_k and flashinfer_top_k_top_p_sampling is None:
-            logits, logits_idx = _apply_top_k_top_p(logits, sampling_tensors.top_ps,
-                                        sampling_tensors.top_ks)
+            logits, logits_idx = _apply_top_k_top_p(logits,
+                                                    sampling_tensors.top_ps,
+                                                    sampling_tensors.top_ks)
 
         if do_min_p:
             logits = _apply_min_p(logits, sampling_tensors.min_ps)
@@ -855,13 +855,13 @@ def _sample_with_torch(
                         seq_groups_arg,
                     )
             else:
-                result_idx = _multinomial(
-                    probs[long_sample_indices],
-                    max_n_in_batch,
-                    seq_groups=seq_groups_arg)
+                result_idx = _multinomial(probs[long_sample_indices],
+                                          max_n_in_batch,
+                                          seq_groups=seq_groups_arg)
                 if logits_idx is not None:
                     # multinomial_samples[sampling_type] = logits_idx[:, result_idx[:][0]]
-                    token_ids = logits_idx[long_sample_indices].gather(dim=1, index=result_idx.to(logits_idx.device))
+                    token_ids = logits_idx[long_sample_indices].gather(
+                        dim=1, index=result_idx.to(logits_idx.device))
                     multinomial_samples[sampling_type] = token_ids
                 else:
                     multinomial_samples[sampling_type] = result_idx

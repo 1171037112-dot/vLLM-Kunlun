@@ -3,18 +3,15 @@
 """Inference-only Qwen3Next model."""
 from collections.abc import Iterable
 from itertools import islice
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
+import xtorch_ops
 from einops import rearrange
 from torch import nn
 from transformers.activations import ACT2FN
-
 from vllm.attention import AttentionBackend, AttentionMetadata
-
-from vllm_kunlun.ops.attention.layer import Attention
-
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import (CacheConfig, ModelConfig, SpeculativeConfig,
                          VllmConfig, get_current_vllm_config)
@@ -24,35 +21,37 @@ from vllm.distributed import (divide, get_ep_group, get_pp_group,
                               tensor_model_parallel_all_gather)
 from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.logger import init_logger
-from vllm_kunlun.ops.fla import (fused_recurrent_gated_delta_rule, torch_chunk_gated_delta_rule, chunk_gated_delta_rule)
-from vllm.model_executor.layers.fla.ops import (
-    RMSNormGated)
-from vllm_kunlun.ops.fused_moe.layer import FusedMoE
+from vllm.model_executor.layers.fla.ops import RMSNormGated
 # yapf conflicts with isort for this block
 # yapf: disable
-from vllm.model_executor.layers.layernorm import (
-    GemmaRMSNorm as Qwen3NextRMSNorm)
+from vllm.model_executor.layers.layernorm import \
+    GemmaRMSNorm as Qwen3NextRMSNorm
 # yapf: enable
 from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                MergedColumnParallelLinear,
                                                QKVParallelLinear,
+                                               ReplicatedLinear,
                                                RowParallelLinear)
-from vllm.model_executor.layers.linear import ReplicatedLinear
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.mamba.abstract import MambaBase
-from vllm.model_executor.layers.mamba.mamba_mixer2 import (
-    mamba_v2_sharded_weight_loader)
+from vllm.model_executor.layers.mamba.mamba_mixer2 import \
+    mamba_v2_sharded_weight_loader
 from vllm.model_executor.layers.mamba.mamba_utils import (
     MambaStateDtypeCalculator, MambaStateShapeCalculator)
-from vllm_kunlun.ops.mamba.causal_conv1d import (
-    causal_conv1d_fn, causal_conv1d_update)
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import (
-    DEFAULT_VOCAB_PADDING_SIZE, ParallelLMHead, VocabParallelEmbedding)
+    DEFAULT_VOCAB_PADDING_SIZE, ParallelLMHead, VocabParallelEmbedding,
+    get_masked_input_and_mask)
 from vllm.model_executor.model_loader.weight_utils import (
     default_weight_loader, sharded_weight_loader)
-from vllm.model_executor.models.utils import sequence_parallel_chunk
+from vllm.model_executor.models.interfaces import (HasInnerState, IsHybrid,
+                                                   MixtureOfExperts,
+                                                   SupportsLoRA, SupportsPP)
+from vllm.model_executor.models.utils import (
+    AutoWeightsLoader, PPMissingLayer, extract_layer_index,
+    is_pp_missing_parameter, make_empty_intermediate_tensors_factory,
+    make_layers, maybe_prefix, sequence_parallel_chunk)
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
@@ -61,16 +60,14 @@ from vllm.triton_utils import tl, triton
 from vllm.utils import direct_register_custom_op
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
 
-from vllm.model_executor.models.interfaces import (HasInnerState, IsHybrid, MixtureOfExperts,
-                         SupportsLoRA, SupportsPP)
-from vllm.model_executor.models.utils import (AutoWeightsLoader, PPMissingLayer, extract_layer_index,
-                    is_pp_missing_parameter,
-                    make_empty_intermediate_tensors_factory, make_layers,
-                    maybe_prefix)
-from vllm_kunlun.ops.activation import SiluAndMul
 from vllm_kunlun.ops._kunlun_ops import KunlunOps as ops
-from vllm.model_executor.layers.vocab_parallel_embedding import get_masked_input_and_mask
-import xtorch_ops
+from vllm_kunlun.ops.activation import SiluAndMul
+from vllm_kunlun.ops.attention.layer import Attention
+from vllm_kunlun.ops.fla import (chunk_gated_delta_rule,
+                                 fused_recurrent_gated_delta_rule)
+from vllm_kunlun.ops.fused_moe.layer import FusedMoE
+from vllm_kunlun.ops.mamba.causal_conv1d import (causal_conv1d_fn,
+                                                 causal_conv1d_update)
 
 
 @torch.compile(dynamic=True, backend="aot_eager")
@@ -92,6 +89,7 @@ def get_masked_input_and_mask_kunlun(
     vocab_mask = org_vocab_mask | added_vocab_mask
     input_ = vocab_mask * (input_ - valid_offset)
     return input_, ~vocab_mask
+
 
 get_masked_input_and_mask = get_masked_input_and_mask_kunlun
 
@@ -133,6 +131,7 @@ class Qwen3NextMLP(nn.Module):
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
         return x
+
 
 class Qwen3NextSparseMoeBlock(nn.Module):
 
@@ -226,9 +225,10 @@ class Qwen3NextSparseMoeBlock(nn.Module):
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
         kunlun_linear_weights = self.gate.get_weights()
-        final_hidden_states = self.experts(hidden_states=hidden_states,
-                                           router_logits=router_logits,
-                                           linear_weights=kunlun_linear_weights)
+        final_hidden_states = self.experts(
+            hidden_states=hidden_states,
+            router_logits=router_logits,
+            linear_weights=kunlun_linear_weights)
 
         if shared_output is not None:
             final_hidden_states = final_hidden_states + shared_output
@@ -242,6 +242,7 @@ class Qwen3NextSparseMoeBlock(nn.Module):
                 final_hidden_states)
 
         return final_hidden_states.view(orig_shape)
+
 
 class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
 
@@ -615,12 +616,17 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                 initial_state = ssm_state[
                     non_spec_state_indices_tensor].contiguous()
             else:
-                initial_state_shape = non_spec_state_indices_tensor.shape + ssm_state.shape[1: ]
-                initial_state = torch.empty(initial_state_shape, dtype=ssm_state.dtype, device=ssm_state.device)
+                initial_state_shape = non_spec_state_indices_tensor.shape + ssm_state.shape[
+                    1:]
+                initial_state = torch.empty(initial_state_shape,
+                                            dtype=ssm_state.dtype,
+                                            device=ssm_state.device)
                 for i in range(non_spec_state_indices_tensor.shape[0]):
-                    initial_state[i] = ssm_state[non_spec_state_indices_tensor[i]]
-            
-            initial_state = initial_state * has_initial_state.view(has_initial_state.shape[0], 1, 1, 1)
+                    initial_state[i] = ssm_state[
+                        non_spec_state_indices_tensor[i]]
+
+            initial_state = initial_state * has_initial_state.view(
+                has_initial_state.shape[0], 1, 1, 1)
             initial_state = initial_state.transpose(-1, -2).contiguous()
             (
                 core_attn_out_non_spec,
@@ -637,15 +643,16 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                 cu_seqlens=non_spec_query_start_loc,
             )
             # Init cache
-            last_recurrent_state = last_recurrent_state.transpose(-1, -2).contiguous().to(ssm_state.dtype).view(
-                                    last_recurrent_state.shape[0], -1, last_recurrent_state.shape[-1])
-            cast_ssm_state = ssm_state.view(ssm_state.shape[0], 1, -1, ssm_state.shape[-1])
-            xtorch_ops.reshape_and_cache_flash(
-                                last_recurrent_state,
-                                last_recurrent_state,
-                                cast_ssm_state,
-                                cast_ssm_state,
-                                non_spec_state_indices_tensor)
+            last_recurrent_state = last_recurrent_state.transpose(
+                -1, -2).contiguous().to(ssm_state.dtype).view(
+                    last_recurrent_state.shape[0], -1,
+                    last_recurrent_state.shape[-1])
+            cast_ssm_state = ssm_state.view(ssm_state.shape[0], 1, -1,
+                                            ssm_state.shape[-1])
+            xtorch_ops.reshape_and_cache_flash(last_recurrent_state,
+                                               last_recurrent_state,
+                                               cast_ssm_state, cast_ssm_state,
+                                               non_spec_state_indices_tensor)
         elif attn_metadata.num_decodes > 0:
             core_attn_out_non_spec, last_recurrent_state = (
                 fused_recurrent_gated_delta_rule(

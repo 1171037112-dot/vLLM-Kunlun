@@ -30,6 +30,8 @@ tokenizers>=0.21.2
 uvloop==0.21.0
 prometheus-fastapi-instrumentator==7.1.0
 transformers==4.57.0
+pre-commit==4.0.1
+
 
 # 基础构建依赖
 hatchling>=1.25

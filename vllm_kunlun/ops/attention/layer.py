@@ -1,26 +1,26 @@
 """layer.py"""
 
+from typing import List, Optional
+
 import torch
 import torch.nn.functional as F
-from typing import Optional, List, Dict, Any
+from torch.library import custom_op
+from vllm.attention import Attention as VllmAttention
 from vllm.attention import AttentionType
+from vllm.attention.layer import MultiHeadAttention as VllmMultiHeadAttention
+from vllm.config import CacheConfig
 from vllm.distributed.kv_transfer import (get_kv_transfer_group,
                                           has_kv_transfer_group,
                                           is_v1_kv_transfer_group)
-from vllm.config import CacheConfig
-from vllm.model_executor.layers.quantization.base_config import (
-    QuantizationConfig)
-
 from vllm.forward_context import ForwardContext, get_forward_context
-
-from vllm.attention import Attention as VllmAttention
-from vllm.attention.layer import MultiHeadAttention as VllmMultiHeadAttention
-from torch.library import custom_op, impl
-
+from vllm.model_executor.layers.quantization.base_config import \
+    QuantizationConfig
 from vllm.platforms import _Backend
+
 
 class Attention(VllmAttention):
     """Attention"""
+
     def __init__(
         self,
         num_heads: int,
@@ -118,11 +118,12 @@ class Attention(VllmAttention):
                 return self.impl.forward(self, query, key, value,
                                          self_kv_cache, attn_metadata)
             else:
-                return unified_attention(
-                    query, key, value, self.layer_name)
+                return unified_attention(query, key, value, self.layer_name)
+
 
 # 重写自 vllm.attention.layer 中的 MultiHeadAttention 类
 class MultiHeadAttention(VllmMultiHeadAttention):
+
     def __init__(
         self,
         num_heads: int,
@@ -131,14 +132,14 @@ class MultiHeadAttention(VllmMultiHeadAttention):
         num_kv_heads: Optional[int] = None,
     ):
         super().__init__(
-            num_heads = num_heads,
-            head_size = head_size,
-            scale = scale,
-            num_kv_heads = num_kv_heads,
+            num_heads=num_heads,
+            head_size=head_size,
+            scale=scale,
+            num_kv_heads=num_kv_heads,
         )
         # kunlun只支持flash_attn
         self.attn_backend = _Backend.FLASH_ATTN
-    
+
     def forward(
         self,
         query: torch.Tensor,
@@ -187,6 +188,7 @@ class MultiHeadAttention(VllmMultiHeadAttention):
 
         return out.reshape(bsz, q_len, -1)
 
+
 def wait_for_kv_layer_from_connector(layer_name: str):
     """wait_for_kv_layer_from_connector"""
     if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
@@ -201,9 +203,9 @@ def wait_for_kv_layer_from_connector(layer_name: str):
     assert isinstance(attn_metadata, dict)
     connector.wait_for_layer_load(layer_name)
 
-def maybe_save_kv_layer_to_connector(
-    layer_name: str,
-    kv_cache_layer: List[torch.Tensor]):
+
+def maybe_save_kv_layer_to_connector(layer_name: str,
+                                     kv_cache_layer: List[torch.Tensor]):
     """maybe_save_kv_layer_to_connector"""
     if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
         return
@@ -218,6 +220,7 @@ def maybe_save_kv_layer_to_connector(
     connector.save_kv_layer(layer_name, kv_cache_layer,
                             attn_metadata[layer_name])
 
+
 @custom_op("vllm::unified_attention_with_output_kunlun", mutates_args=())
 def unified_attention_with_output_kunlun(
     query: torch.Tensor,
@@ -225,7 +228,8 @@ def unified_attention_with_output_kunlun(
     value: torch.Tensor,
     output: torch.Tensor,
     layer_name: str,
-    output_scale: Optional[torch.Tensor] = None,) -> None:
+    output_scale: Optional[torch.Tensor] = None,
+) -> None:
     wait_for_kv_layer_from_connector(layer_name)
     forward_context: ForwardContext = get_forward_context()
     attn_metadata = forward_context.attn_metadata
@@ -243,16 +247,21 @@ def unified_attention_with_output_kunlun(
 
     maybe_save_kv_layer_to_connector(layer_name, kv_cache)
 
+
 def _fake_unified_attention_with_output_kunlun(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
     output: torch.Tensor,
     layer_name: str,
-    output_scale: Optional[torch.Tensor] = None,) -> None:
+    output_scale: Optional[torch.Tensor] = None,
+) -> None:
     return None
 
-unified_attention_with_output_kunlun.register_fake(_fake_unified_attention_with_output_kunlun)
+
+unified_attention_with_output_kunlun.register_fake(
+    _fake_unified_attention_with_output_kunlun)
+
 
 def unified_attention(
     query: torch.Tensor,

@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
-from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
-from vllm.distributed import (divide, get_tensor_model_parallel_rank,
-                              get_tensor_model_parallel_world_size,
-                              tensor_model_parallel_all_reduce)
+from vllm.distributed import tensor_model_parallel_all_reduce
+from vllm.model_executor.layers.vocab_parallel_embedding import \
+    VocabParallelEmbedding
+
 
 @torch.compile(dynamic=True, backend="aot_eager")
 def get_masked_input_and_mask(
@@ -27,6 +27,7 @@ def get_masked_input_and_mask(
     input_ = vocab_mask * (input_ - valid_offset)
     return input_, ~vocab_mask
 
+
 def forward_native_kunlun(self, input_):
     if self.tp_size > 1:
         # Build the mask.
@@ -39,13 +40,13 @@ def forward_native_kunlun(self, input_):
     else:
         masked_input = input_
     # Get the embeddings.
-    output_parallel = self.quant_method.embedding(self,
-                                                  masked_input.long())
+    output_parallel = self.quant_method.embedding(self, masked_input.long())
     # Mask the output embedding.
     if self.tp_size > 1:
         output_parallel.masked_fill_(input_mask.unsqueeze(-1), 0)
     # Reduce across all the model parallel GPUs.
     output = tensor_model_parallel_all_reduce(output_parallel)
     return output
+
 
 VocabParallelEmbedding.forward_native = forward_native_kunlun

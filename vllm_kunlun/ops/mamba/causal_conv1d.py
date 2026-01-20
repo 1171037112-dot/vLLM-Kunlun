@@ -9,10 +9,9 @@ from typing import Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
-
+import xtorch_ops
 from vllm.attention.backends.utils import PAD_SLOT_ID
 from vllm.triton_utils import tl, triton
-import xtorch_ops
 
 
 @triton.jit()
@@ -59,7 +58,6 @@ def _causal_conv1d_fwd_kernel(  # continuous batching
     NP2_STATELEN: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
-
 ):
     conv_states_ptr = initial_states_ptr
     conv_state_indices_ptr = cache_indices_ptr
@@ -618,11 +616,10 @@ def causal_conv1d_fn_triton(
         BLOCK_M=8,
         BLOCK_N=256,
         num_stages=2,
-        groups_per_cluster = np2_statelen,
-        isCloseUnrollControl = True,
-        isCloseVectorization = True,
-        is_use_mask_zero = True
-    )
+        groups_per_cluster=np2_statelen,
+        isCloseUnrollControl=True,
+        isCloseVectorization=True,
+        is_use_mask_zero=True)
     return out
 
 
@@ -968,6 +965,7 @@ def _causal_conv1d_update_kernel_xpu(
 
         tl.store(o_ptrs, acc, mask=mask_1d)
 
+
 @triton.jit()
 def _causal_conv1d_update_kernel(
     # Pointers to matrices
@@ -1195,30 +1193,30 @@ def _causal_conv1d_update_kernel(
         tl.store(o_ptrs, acc, mask=mask_1d)
 
 
-def torch_causal_conv1d_update(
-    hidden_states,
-    conv_state,
-    weight,
-    bias=None,
-    activation=None,
-    conv_state_indices=None
-):
+def torch_causal_conv1d_update(hidden_states,
+                               conv_state,
+                               weight,
+                               bias=None,
+                               activation=None,
+                               conv_state_indices=None):
     _, hidden_size, seq_len = hidden_states.shape
     tmp_conv_state = conv_state[conv_state_indices]
     state_len = tmp_conv_state.shape[-1]
 
-    hidden_states_new = torch.cat([tmp_conv_state, hidden_states], dim=-1).to(weight.dtype)
+    hidden_states_new = torch.cat([tmp_conv_state, hidden_states],
+                                  dim=-1).to(weight.dtype)
     cast_conv_state = conv_state.unsqueeze(0)
     tmp_hidden_states = hidden_states_new[:, :, -state_len:]
     ori_shape = tmp_hidden_states.shape
     tmp_hidden_states = tmp_hidden_states.transpose(1, 2).reshape(ori_shape)
-    xtorch_ops.reshape_and_cache_flash(
-                        tmp_hidden_states,
-                        tmp_hidden_states,
-                        cast_conv_state,
-                        cast_conv_state,
-                        conv_state_indices)
-    out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
+    xtorch_ops.reshape_and_cache_flash(tmp_hidden_states, tmp_hidden_states,
+                                       cast_conv_state, cast_conv_state,
+                                       conv_state_indices)
+    out = F.conv1d(hidden_states_new,
+                   weight.unsqueeze(1),
+                   bias,
+                   padding=0,
+                   groups=hidden_size)
     out = F.silu(out[:, :, -seq_len:])
     out = out.to(hidden_states.dtype).squeeze(-1)
     return out
@@ -1297,13 +1295,12 @@ def causal_conv1d_update(
 
     if batch > 1:
         return torch_causal_conv1d_update(
-                x,
-                conv_state,
-                weight,
-                bias,
-                activation,
-                conv_state_indices=conv_state_indices
-            )
+            x,
+            conv_state,
+            weight,
+            bias,
+            activation,
+            conv_state_indices=conv_state_indices)
 
     # adopt the strategy in vLLM that overwrite on 'x' directly, rather than creating a new tensor 'o'
     out = x
@@ -1328,6 +1325,7 @@ def causal_conv1d_update(
             1,
             triton.cdiv(dim, META["BLOCK_N"]),
         )
+
     for batch_id in range(batch):
         _causal_conv1d_update_kernel_xpu[grid](
             x,
@@ -1369,8 +1367,7 @@ def causal_conv1d_update(
             isCloseUnrollControl=True,
             isCloseVectorization=True,
             isCloseOffsetAnalysis=True,
-            is_use_mask_zero = True
-        )
+            is_use_mask_zero=True)
     if unsqueeze:
         out = out.squeeze(-1)
     return out

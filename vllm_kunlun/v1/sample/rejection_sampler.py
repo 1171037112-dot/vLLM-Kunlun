@@ -1,12 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from typing import Optional
-from typing import Union
+
 import torch
 import torch.nn as nn
-
 from vllm.logger import init_logger
-
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
 from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
@@ -642,4 +640,3 @@ def sample_recovered_tokens_pytorch(
 
             if IS_NGRAM:
                 target_probs[token_idx, draft_token_id] = orig_prob
-

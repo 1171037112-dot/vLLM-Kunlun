@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 import torch
-
 from vllm.attention.backends.abstract import AttentionBackend
 from vllm.config import ModelConfig, SchedulerConfig, VllmConfig
 from vllm.model_executor.models.interfaces import MultiModalEmbeddings
@@ -303,7 +302,8 @@ def bind_kv_cache(
             # TODO - analyze where runner_kv_caches is used and the right
             # way to ensure it properly reflects multiple attention layers
             # in the same decoder block.
-            if current_platform.is_kunlun() or current_platform.is_cuda() or current_platform.is_xpu():
+            if current_platform.is_kunlun() or current_platform.is_cuda(
+            ) or current_platform.is_xpu():
                 # We know that the GPU runner is not impacted by this
                 # case. Some test code depends on runner_kv_caches, but
                 # not in a way that's impacted by ignoring this.

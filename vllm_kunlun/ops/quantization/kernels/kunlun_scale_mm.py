@@ -19,23 +19,16 @@
 from typing import Optional
 
 import torch
-import xspeedgate_ops
-from vllm.platforms import current_platform, PlatformEnum
-from vllm.model_executor.layers.quantization.utils import replace_parameter
-from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
-    convert_to_channelwise,
-)
 from vllm.model_executor.layers.quantization.kernels.scaled_mm import (
-    _POSSIBLE_KERNELS,
-    ScaledMMLinearLayerConfig,
-    CutlassScaledMMLinearKernel,
-)
+    _POSSIBLE_KERNELS, CutlassScaledMMLinearKernel, ScaledMMLinearLayerConfig)
+from vllm.platforms import PlatformEnum, current_platform
 
 
 class KunlunScaledMMLinearKernel(CutlassScaledMMLinearKernel):
 
     @classmethod
-    def can_implement(cls, c: ScaledMMLinearLayerConfig) -> tuple[bool, Optional[str]]:
+    def can_implement(
+            cls, c: ScaledMMLinearLayerConfig) -> tuple[bool, Optional[str]]:
 
         if not current_platform.is_kunlun():
             return False, "KunlunScaledMM requires running on XPU."
@@ -101,7 +94,6 @@ class KunlunScaledMMLinearKernel(CutlassScaledMMLinearKernel):
 
 
 _POSSIBLE_KERNELS[PlatformEnum.CUDA] = [KunlunScaledMMLinearKernel]
-
 
 print(
     f"[vllm_kunlun] ScaledMM kernels: {[k.__name__ for k in _POSSIBLE_KERNELS[PlatformEnum.CUDA]]}"

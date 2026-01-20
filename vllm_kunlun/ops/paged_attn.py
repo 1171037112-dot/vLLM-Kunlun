@@ -1,15 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import torch
-
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
+
+import torch
 from vllm.platforms import current_platform
 
-
 from vllm_kunlun.ops._kunlun_ops import KunlunOps as ops
-
 
 # Should be the same as PARTITION_SIZE in `paged_attention_v2_launcher`.
 _PARTITION_SIZE = 512
@@ -93,10 +91,11 @@ class PagedAttention:
             value_cache = kv_cache[1]
         else:
             key_cache = kv_cache[0]
-            key_cache = key_cache.view(num_blocks, num_kv_heads, head_size // x,
-                                    -1, x)
+            key_cache = key_cache.view(num_blocks, num_kv_heads,
+                                       head_size // x, -1, x)
             value_cache = kv_cache[1]
-            value_cache = value_cache.view(num_blocks, num_kv_heads, head_size, -1)
+            value_cache = value_cache.view(num_blocks, num_kv_heads, head_size,
+                                           -1)
         return key_cache, value_cache
 
     @staticmethod
@@ -165,7 +164,7 @@ class PagedAttention:
         # For context len > 8192, use V2 kernel to avoid shared memory shortage.
         use_v1 = (max_seq_len <= 8192
                   and (max_num_partitions == 1 or num_seqs * num_heads > 512))
-        
+
         if use_v1:
             # Run PagedAttention V1.
             ops.paged_attention_v1(

@@ -1,6 +1,5 @@
 # mypy: allow-untyped-defs
 # mypy: disable-error-code="method-assign"
-
 """
 Functions in this file are responsible for modifying the eval frame
 handler at RUNTIME.  Therefore, all functions in this file are hot.
@@ -23,47 +22,29 @@ import warnings
 import weakref
 from enum import Enum
 from os.path import dirname, join
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    NamedTuple,
-    Optional,
-    Set,
-    Tuple,
-    TYPE_CHECKING,
-    Union,
-)
+from typing import (TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple,
+                    Optional, Set, Tuple, Union)
 from unittest.mock import patch
 
 import sympy
-
 import torch
 import torch.fx
 import torch.utils._pytree as pytree
 import torch.utils.checkpoint
 from torch import _guards
-
 # see discussion at https://github.com/pytorch/pytorch/issues/120699
-from torch._C._dynamo.eval_frame import (  # noqa: F401
-    reset_code,
-    set_guard_error_hook,
-    skip_code,
-    unsupported,
-)
+from torch._C._dynamo.eval_frame import (reset_code,  # noqa: F401
+                                         set_guard_error_hook, skip_code,
+                                         unsupported)
 from torch._dispatch.python import enable_python_dispatcher
 from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch._utils_internal import justknobs_check, log_export_usage
 from torch.export.dynamic_shapes import _combine_args, _process_dynamic_shapes
 from torch.fx import GraphModule
 from torch.fx.experimental.proxy_tensor import make_fx
-from torch.fx.experimental.symbolic_shapes import (
-    ConstraintViolationError,
-    DimDynamic,
-    ShapeEnv,
-    StatelessSymbolicContext,
-)
+from torch.fx.experimental.symbolic_shapes import (ConstraintViolationError,
+                                                   DimDynamic, ShapeEnv,
+                                                   StatelessSymbolicContext)
 from torch.fx.graph import _PyTreeCodeGen, _PyTreeInfo
 
 from . import config, convert_frame, external_utils, trace_rules, utils
@@ -74,15 +55,12 @@ from .hooks import Hooks
 from .mutation_guard import install_generation_tagging_init
 from .utils import common_constant_types, compile_times
 
-
 if TYPE_CHECKING:
     from torch._subclasses import fake_tensor
 
     from .types import CacheEntry, DynamoCallback
 
-
 log = logging.getLogger(__name__)
-
 
 always_optimize_code_objects = utils.ExactWeakKeyDictionary()
 null_context = contextlib.nullcontext
@@ -98,6 +76,8 @@ cached_backends: Dict[int, CompilerFn] = {}
 unset = Unset.token
 
 from torch._C._dynamo.eval_frame import set_eval_frame
+
+
 def _maybe_set_eval_frame(callback: DynamoCallback):
     # A wrapper on set_eval_frame that is guarded by a Justknob.
     # Users can disable torchDynamo by setting the JK to False.
@@ -123,13 +103,13 @@ def _reset_guarded_backend_cache():
 DONT_WRAP_FILES = {
     # For tracing into fx modules
     inspect.getsourcefile(GraphModule),
-    join(dirname(dirname(__file__)), "onnx/_internal/fx/dynamo_graph_extractor.py"),
+    join(dirname(dirname(__file__)),
+         "onnx/_internal/fx/dynamo_graph_extractor.py"),
 }
 
 
 def _debug_get_cache_entry_list(
-    code: Union[types.CodeType, Callable[..., Any]]
-) -> List[CacheEntry]:
+        code: Union[types.CodeType, Callable[..., Any]]) -> List[CacheEntry]:
     """
     Given a code object or a callable object, retrieve the cache entries
      stored in this code.
@@ -173,13 +153,13 @@ class OptimizedModule(torch.nn.Module):
             # No need to check trace rules
             self.forward = self.dynamo_ctx(self._orig_mod.__call__)
         elif isinstance(self._orig_mod.forward, types.MethodType) and (
-            trace_rules.check(self._orig_mod.forward)
-            or getattr(self._orig_mod, "_is_fsdp_managed_module", False)
-        ):
+                trace_rules.check(self._orig_mod.forward)
+                or getattr(self._orig_mod, "_is_fsdp_managed_module", False)):
             # This may be a torch.nn.* instance in trace_rules.py which
             # won't trigger a frame evaluation workaround to add an extra
             # frame we can capture
-            self.forward = self.dynamo_ctx(external_utils.wrap_inline(self._orig_mod))
+            self.forward = self.dynamo_ctx(
+                external_utils.wrap_inline(self._orig_mod))
         else:
             # Invoke hooks outside of dynamo then pickup the inner frame
             self.forward = self.dynamo_ctx(self._orig_mod.__call__)
@@ -288,12 +268,12 @@ def make_set_enable_dynamic(enable: bool):
         # Assume everything is dynamic by default
         return config._make_closure_patcher(assume_static_by_default=False)
     else:
-        return config._make_closure_patcher(
-            automatic_dynamic_shapes=False, assume_static_by_default=True
-        )
+        return config._make_closure_patcher(automatic_dynamic_shapes=False,
+                                            assume_static_by_default=True)
 
 
 class _TorchDynamoContext:
+
     def __init__(
         self,
         callback: DynamoCallback,
@@ -371,9 +351,8 @@ class _TorchDynamoContext:
         # add context containing GraphModule to any GraphModule forward functions
         if isinstance(fn, GraphModule):
             # add context containing GraphModule to any GraphModule forward functions
-            code_context.get_context(fn.forward.__code__)[
-                "orig_graphmodule"
-            ] = weakref.ref(fn)
+            code_context.get_context(
+                fn.forward.__code__)["orig_graphmodule"] = weakref.ref(fn)
 
         # Optimize the forward method of torch.nn.Module object
         if isinstance(fn, torch.nn.Module):
@@ -406,14 +385,10 @@ class _TorchDynamoContext:
             filename = inspect.getsourcefile(fn)
         except TypeError:
             filename = None
-        if (
-            (filename is None or trace_rules.check(fn))
-            and (
-                getattr(fn, "__name__", "")
-                not in ["_call_impl", "_wrapped_call_impl", "_lazy_forward"]
-            )
-            and filename not in DONT_WRAP_FILES
-        ):
+        if ((filename is None or trace_rules.check(fn)) and
+            (getattr(fn, "__name__", "")
+             not in ["_call_impl", "_wrapped_call_impl", "_lazy_forward"])
+                and filename not in DONT_WRAP_FILES):
             # call to a builtin without a frame for us to capture
             fn = external_utils.wrap_inline(fn)
 
@@ -458,16 +433,14 @@ class _TorchDynamoContext:
             # This used to be a context but putting a `with` here is a noticible
             # perf regression (#126293)
             saved_dynamic_layer_stack_depth = (
-                torch._C._functorch.get_dynamic_layer_stack_depth()
-            )
+                torch._C._functorch.get_dynamic_layer_stack_depth())
 
             try:
                 return fn(*args, **kwargs)
             finally:
                 # Restore the dynamic layer stack depth if necessary.
                 torch._C._functorch.pop_dynamic_layer_stack_and_undo_to_depth(
-                    saved_dynamic_layer_stack_depth
-                )
+                    saved_dynamic_layer_stack_depth)
 
                 _maybe_set_eval_frame(prior)
                 for cleanup in cleanups:
@@ -490,8 +463,7 @@ class _TorchDynamoContext:
         if callback not in (None, False):
             if not hasattr(fn, "__code__"):
                 raise RuntimeError(
-                    textwrap.dedent(
-                        """
+                    textwrap.dedent("""
 
                         torch._dynamo.optimize is called on a non function object.
                         If this is a callable class, please wrap the relevant code into a function and optimize the
@@ -519,15 +491,14 @@ class _TorchDynamoContext:
                         and then optimize the wrapper_fn
 
                         >> opt_wrapper_fn = torch._dynamo.optimize(wrapper_fn)
-                        """
-                    )
-                )
+                        """))
             always_optimize_code_objects[fn.__code__] = True
 
         return _fn
 
 
 class OptimizeContext(_TorchDynamoContext):
+
     def __init__(
         self,
         callback,
@@ -537,10 +508,10 @@ class OptimizeContext(_TorchDynamoContext):
         export=False,
         dynamic=None,
         compiler_config=None,
-        rebuild_ctx: Optional[
-            Callable[[], Union[OptimizeContext, _NullDecorator]]
-        ] = None,
+        rebuild_ctx: Optional[Callable[[], Union[OptimizeContext,
+                                                 _NullDecorator]]] = None,
     ) -> None:
+
         def on_enter():
             install_generation_tagging_init()
 
@@ -579,6 +550,7 @@ class OptimizeContext(_TorchDynamoContext):
 
 
 class RunOnlyContext(_TorchDynamoContext):
+
     def __init__(self) -> None:
         # cudagraph trees relies on generation increment
         def on_enter():
@@ -591,6 +563,7 @@ class RunOnlyContext(_TorchDynamoContext):
 
 
 class DisableContext(_TorchDynamoContext):
+
     def __init__(self) -> None:
         super().__init__(callback=None)
 
@@ -679,6 +652,7 @@ def get_compiler_fn(compiler_fn):
 
 
 class _NullDecorator(contextlib.nullcontext):  # type: ignore[type-arg]
+
     def __call__(self, fn):
         assert callable(fn)
         return fn
@@ -710,6 +684,7 @@ def is_inductor_supported():
 
 
 def optimize(*args, **kwargs):
+
     def rebuild_ctx():
         return optimize(*args, **kwargs)
 
@@ -760,11 +735,8 @@ def _optimize(
     # easier to understand UX at the cost of a little more plumbing on our end.
     hooks = Hooks(guard_export_fn=guard_export_fn, guard_fail_fn=guard_fail_fn)
     torch._C._log_api_usage_once("torch._dynamo.optimize")
-    if (
-        disable
-        or os.environ.get("TORCHDYNAMO_DISABLE", "") == "1"
-        or (not justknobs_check("pytorch/compiler:enable_dynamo"))
-    ):
+    if (disable or os.environ.get("TORCHDYNAMO_DISABLE", "") == "1"
+            or (not justknobs_check("pytorch/compiler:enable_dynamo"))):
         return _NullDecorator()
 
     backend = get_compiler_fn(backend)
@@ -787,9 +759,8 @@ def _optimize(
         hooks,
         backend_ctx_ctor,
         dynamic=dynamic,
-        compiler_config=backend.get_compiler_config()
-        if hasattr(backend, "get_compiler_config")
-        else None,
+        compiler_config=backend.get_compiler_config() if hasattr(
+            backend, "get_compiler_config") else None,
         rebuild_ctx=rebuild_ctx,
     )
 
@@ -797,6 +768,7 @@ def _optimize(
 # TODO(voz): Consider making "explain" output alongside a run / part of a run
 @patch("torch._dynamo.symbolic_convert.explain", True)
 def explain(f, *extra_args, **extra_kwargs):
+
     def inner(*args, **kwargs):
         # TODO(voz): Do we want a decorator for this?
         from . import reset  # type: ignore[attr-defined]
@@ -809,9 +781,8 @@ def explain(f, *extra_args, **extra_kwargs):
         ops_per_graph: List[torch.fx.Node] = []
         out_guards: List[_guards.Guard] = []
 
-        def dynamo_graph_accumulating_compiler(
-            gm: torch.fx.GraphModule, example_inputs
-        ):
+        def dynamo_graph_accumulating_compiler(gm: torch.fx.GraphModule,
+                                               example_inputs):
             from .backends.debugging import _explain_graph_detail
 
             nonlocal graphs
@@ -820,8 +791,7 @@ def explain(f, *extra_args, **extra_kwargs):
             nonlocal break_reasons
 
             gm, graphs, op_count, ops_per_graph, break_reasons = _explain_graph_detail(
-                gm, graphs, op_count, ops_per_graph, break_reasons
-            )
+                gm, graphs, op_count, ops_per_graph, break_reasons)
 
             return gm.forward
 
@@ -870,6 +840,7 @@ def explain(f, *extra_args, **extra_kwargs):
 
 
 class FlattenInputOutputSignature(torch.fx.interpreter.Transformer):
+
     def __init__(
         self,
         m: torch.fx.GraphModule,
@@ -897,22 +868,24 @@ class FlattenInputOutputSignature(torch.fx.interpreter.Transformer):
             else:
                 # Fill node.mata["val"] with faketensor from the input,
                 # if it's not found in matched_input_elements_positions
-                if fake_mode is not None and isinstance(flat_args[i], torch.Tensor):
+                if fake_mode is not None and isinstance(
+                        flat_args[i], torch.Tensor):
                     # TODO(zhxchen17) Also preserve all the user constraints here.
                     arg.node.meta["val"] = fake_mode.from_tensor(
                         flat_args[i],
                         symbolic_context=StatelessSymbolicContext(
                             dynamic_sizes=[
                                 DimDynamic.DYNAMIC
-                                if d in flat_args_dynamic_dims[i]
-                                else DimDynamic.STATIC
+                                if d in flat_args_dynamic_dims[i] else
+                                DimDynamic.STATIC
                                 for d in range(len(flat_args[i].shape))
                             ],
                             constraint_sizes=[None] * len(flat_args[i].shape),
                         ),
                     )
             self.new_args.append(arg)
-        self.old_args_gen = (self.new_args[i] for i in matched_input_elements_positions)
+        self.old_args_gen = (self.new_args[i]
+                             for i in matched_input_elements_positions)
         self.matched_output_elements_positions = matched_output_elements_positions
         self.flat_results = flat_results
 
@@ -921,14 +894,15 @@ class FlattenInputOutputSignature(torch.fx.interpreter.Transformer):
         if "val" in self.current_node.meta:
             arg.node.meta["val"] = self.current_node.meta["val"]
         if "tensor_dict" in self.current_node.meta:
-            arg.node.meta["tensor_dict"] = self.current_node.meta["tensor_dict"]
+            arg.node.meta["tensor_dict"] = self.current_node.meta[
+                "tensor_dict"]
         if "example_value" in self.current_node.meta:
             # NB: intentionally do not use set_example_value
-            arg.node.meta["example_value"] = self.current_node.meta["example_value"]
+            arg.node.meta["example_value"] = self.current_node.meta[
+                "example_value"]
         if "unbacked_bindings" in self.current_node.meta:
             arg.node.meta["unbacked_bindings"] = self.current_node.meta[
-                "unbacked_bindings"
-            ]
+                "unbacked_bindings"]
         return arg
 
     def output(self, target, args, kwargs):
@@ -938,13 +912,12 @@ class FlattenInputOutputSignature(torch.fx.interpreter.Transformer):
         for i in range(len(self.flat_results)):
             if self.matched_output_elements_positions[i] is not None:
                 new_results_flat.append(
-                    lookup[self.matched_output_elements_positions[i]]
-                )
+                    lookup[self.matched_output_elements_positions[i]])
             else:
                 const_val = self.flat_results[i]
                 assert isinstance(const_val, tuple(common_constant_types))
                 new_results_flat.append(const_val)
-        return super().output(target, (new_results_flat,), {})
+        return super().output(target, (new_results_flat, ), {})
 
     def run_node(self, n):
         self.current_node = n
@@ -954,24 +927,22 @@ class FlattenInputOutputSignature(torch.fx.interpreter.Transformer):
         if "example_value" in self.current_node.meta:
             # NB: intentionally do not use set_example_value
             result_proxy.node.meta["example_value"] = self.current_node.meta[
-                "example_value"
-            ]
+                "example_value"]
         if "unbacked_bindings" in self.current_node.meta:
-            result_proxy.node.meta["unbacked_bindings"] = self.current_node.meta[
-                "unbacked_bindings"
-            ]
+            result_proxy.node.meta[
+                "unbacked_bindings"] = self.current_node.meta[
+                    "unbacked_bindings"]
         if self.current_node.op != "output":
             result_proxy.node._rename(
-                getattr(self.current_node, "name", result_proxy.node.name)
-            )
+                getattr(self.current_node, "name", result_proxy.node.name))
         return result_proxy
 
     def transform(self):
         result_gm = super().transform()
         if "dynamo_flat_name_to_original_fqn" in self.module.meta:
-            result_gm.meta["dynamo_flat_name_to_original_fqn"] = self.module.meta[
-                "dynamo_flat_name_to_original_fqn"
-            ]
+            result_gm.meta[
+                "dynamo_flat_name_to_original_fqn"] = self.module.meta[
+                    "dynamo_flat_name_to_original_fqn"]
         return result_gm
 
 
@@ -1018,8 +989,8 @@ def check_signature_rewritable(graph):
             "like this tensor to be an explicit input, add it as a dummy argument "
             "to the top-level model definition you are exporting; if you would "
             "like its value to be embedded as an exported constant, wrap its access "
-            "in a function marked with @assume_constant_result.\n\n"
-            + "\n\n".join(input_errors),
+            "in a function marked with @assume_constant_result.\n\n" +
+            "\n\n".join(input_errors),
         )
 
 
@@ -1069,7 +1040,8 @@ def rewrite_signature(
                 )
 
     check_user_input_output(flat_args, UserErrorType.INVALID_INPUT)
-    flat_results_traced, out_spec_traced = pytree.tree_flatten(dynamo_traced_result)
+    flat_results_traced, out_spec_traced = pytree.tree_flatten(
+        dynamo_traced_result)
     check_user_input_output(flat_results_traced, UserErrorType.INVALID_OUTPUT)
 
     def check_optional_input_and_error(f_sig: inspect.Signature):
@@ -1110,13 +1082,12 @@ def rewrite_signature(
         return matched_elements_positions
 
     matched_input_elements_positions = produce_matching(
-        "inputs", flat_args, graph_captured_input
-    )
+        "inputs", flat_args, graph_captured_input)
 
     assert graph_captured_output is not None
     matched_output_elements_positions = produce_matching(
-        "outputs", list(graph_captured_output) + flat_args, flat_results_traced
-    )
+        "outputs",
+        list(graph_captured_output) + flat_args, flat_results_traced)
 
     new_graph = FlattenInputOutputSignature(
         graph,
@@ -1131,37 +1102,37 @@ def rewrite_signature(
 
     # Make dynamo graph to have same input/output spec as user code
     def argument_names(f_sig, args, kwargs) -> List[str]:
+
         def signature_to_fullargspec(sig: inspect.Signature):
             # Get a list of Parameter objects from the Signature object
             params = list(sig.parameters.values())
             # Separate positional arguments, keyword-only arguments and varargs/varkw
             args = [
-                p.name
-                for p in params
+                p.name for p in params
                 if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
             ]
             kwonlyargs = [
-                p.name for p in params if p.kind == inspect.Parameter.KEYWORD_ONLY
+                p.name for p in params
+                if p.kind == inspect.Parameter.KEYWORD_ONLY
             ]
             varargs = next(
-                (p.name for p in params if p.kind == inspect.Parameter.VAR_POSITIONAL),
+                (p.name for p in params
+                 if p.kind == inspect.Parameter.VAR_POSITIONAL),
                 None,
             )
             varkw = next(
-                (p.name for p in params if p.kind == inspect.Parameter.VAR_KEYWORD),
+                (p.name
+                 for p in params if p.kind == inspect.Parameter.VAR_KEYWORD),
                 None,
             )
             # Get default values for positional arguments and keyword-only arguments
             defaults = tuple(
-                p.default
-                for p in params
+                p.default for p in params
                 if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
-                and p.default is not inspect.Parameter.empty
-            )
+                and p.default is not inspect.Parameter.empty)
             kwonlydefaults = {
                 p.name: p.default
-                for p in params
-                if p.kind == inspect.Parameter.KEYWORD_ONLY
+                for p in params if p.kind == inspect.Parameter.KEYWORD_ONLY
                 and p.default is not inspect.Parameter.empty
             }
             # Get annotations for parameters and return value
@@ -1171,14 +1142,13 @@ def rewrite_signature(
             for parameter in params:
                 annotations[parameter.name] = parameter.annotation
             # Return a FullArgSpec object with the extracted attributes
-            return inspect.FullArgSpec(
-                args, varargs, varkw, defaults, kwonlyargs, kwonlydefaults, annotations
-            )
+            return inspect.FullArgSpec(args, varargs, varkw, defaults,
+                                       kwonlyargs, kwonlydefaults, annotations)
 
         fullargspec = signature_to_fullargspec(f_sig)
 
         # 1. Map `args` 1-to-1 to positional arguments in original signature.
-        input_strs = fullargspec.args[: len(args)]
+        input_strs = fullargspec.args[:len(args)]
 
         if len(args) > len(fullargspec.args):
             # 2. If there are more arguments left in `args`, they map to varargs in original
@@ -1186,7 +1156,8 @@ def rewrite_signature(
             assert fullargspec.varargs is not None, "More arguments than expected"
             input_strs += [
                 f"{fullargspec.varargs}_{i}"
-                for i in range(0, len(args) - len(input_strs))
+                for i in range(0,
+                               len(args) - len(input_strs))
             ]
         elif len(args) < len(fullargspec.args):
             # 3. If there are fewer arguments in `args` than `fullargspec.args`,
@@ -1195,8 +1166,7 @@ def rewrite_signature(
             # export them as part of the function signature. The latter will be handled
             # in the next step.
             for unprovided_arg in fullargspec.args[
-                len(args) : -len(fullargspec.defaults or [])
-            ]:
+                    len(args):-len(fullargspec.defaults or [])]:
                 assert unprovided_arg in kwargs, f"Missing argument {unprovided_arg}"
 
         # 4. Keyword arguments provided in `kwargs`.
@@ -1206,9 +1176,8 @@ def rewrite_signature(
         # as part of the function signature.
         for kwonly_arg in fullargspec.kwonlyargs:
             kwonlydefaults = fullargspec.kwonlydefaults or {}
-            assert (
-                kwonly_arg in kwargs or kwonly_arg in kwonlydefaults
-            ), f"Missing keyword only argument {kwonly_arg}"
+            assert (kwonly_arg in kwargs or kwonly_arg in kwonlydefaults
+                    ), f"Missing keyword only argument {kwonly_arg}"
 
         return input_strs
 
@@ -1217,8 +1186,7 @@ def rewrite_signature(
             argument_names(f_sig, orig_args, orig_kwargs),
             in_spec,
             out_spec_traced,
-        )
-    )
+        ))
     new_graph.recompile()
     return new_graph
 
@@ -1228,11 +1196,11 @@ def export(
     *extra_args,
     aten_graph: bool = False,
     pre_dispatch: bool = False,
-    decomposition_table: Optional[
-        Dict[torch._ops.OpOverload, Callable[..., Any]]
-    ] = None,
+    decomposition_table: Optional[Dict[torch._ops.OpOverload,
+                                       Callable[..., Any]]] = None,
     tracing_mode: str = "symbolic",
-    dynamic_shapes: Optional[Union[Dict[str, Any], Tuple[Any], List[Any]]] = None,
+    dynamic_shapes: Optional[Union[Dict[str, Any], Tuple[Any],
+                                   List[Any]]] = None,
     assume_static_by_default: bool = False,
     same_signature: bool = True,
     disable_constraint_solver: bool = False,
@@ -1327,15 +1295,14 @@ def export(
         def guard_export_print(guards: _guards.GuardsSet):
             nonlocal out_guards
             assert (
-                out_guards is None
-            ), "whole graph export entails exactly one guard export"
+                out_guards
+                is None), "whole graph export entails exactly one guard export"
             out_guards = guards
 
         example_inputs = []
 
-        def dynamo_normalization_capturing_compiler(
-            gm: torch.fx.GraphModule, inner_example_inputs
-        ):
+        def dynamo_normalization_capturing_compiler(gm: torch.fx.GraphModule,
+                                                    inner_example_inputs):
             nonlocal graph
             assert (
                 graph is None
@@ -1358,14 +1325,14 @@ def export(
                 graph_captured_input = graph_inputs
                 assert graph is not None
 
-                named_parameters = dict(graph.named_parameters(remove_duplicate=False))
-                named_buffers = dict(graph.named_buffers(remove_duplicate=False))
+                named_parameters = dict(
+                    graph.named_parameters(remove_duplicate=False))
+                named_buffers = dict(
+                    graph.named_buffers(remove_duplicate=False))
 
-                ambient_fake_mode = (
-                    _guards.detect_fake_mode(graph_inputs)
-                    if _guards.detect_fake_mode(graph_inputs) is not None
-                    else fake_mode
-                )
+                ambient_fake_mode = (_guards.detect_fake_mode(graph_inputs)
+                                     if _guards.detect_fake_mode(graph_inputs)
+                                     is not None else fake_mode)
 
                 # We reran fake tensor propagation, but we didn't do
                 # anything with the resulting unbacked SymInts.  Drop them
@@ -1374,11 +1341,11 @@ def export(
                 # data-dependent output size!
                 ignore_fresh_unbacked = null_context()
                 if shape_env := ambient_fake_mode.shape_env:
-                    ignore_fresh_unbacked = shape_env.ignore_fresh_unbacked_symbols()
+                    ignore_fresh_unbacked = shape_env.ignore_fresh_unbacked_symbols(
+                    )
 
-                with (
-                    ambient_fake_mode
-                ), enable_python_dispatcher(), ignore_fresh_unbacked:
+                with (ambient_fake_mode
+                      ), enable_python_dispatcher(), ignore_fresh_unbacked:
                     params_and_buffers = {
                         **named_parameters,
                         **named_buffers,
@@ -1386,16 +1353,14 @@ def export(
                     fake_params_buffers = {}
 
                     for name, value in params_and_buffers.items():
-                        fake_params_buffers[name] = ambient_fake_mode.from_tensor(
-                            value, static_shapes=True
-                        )
+                        fake_params_buffers[
+                            name] = ambient_fake_mode.from_tensor(
+                                value, static_shapes=True)
 
                     fake_graph_inputs = pytree.tree_map(
-                        ambient_fake_mode.from_tensor, graph_inputs
-                    )
+                        ambient_fake_mode.from_tensor, graph_inputs)
                     graph_captured_result = torch.func.functional_call(
-                        graph, fake_params_buffers, fake_graph_inputs
-                    )
+                        graph, fake_params_buffers, fake_graph_inputs)
 
                 return graph_captured_result
 
@@ -1410,13 +1375,15 @@ def export(
         if tracing_mode != "symbolic":
             assume_static_by_default = True
         with config.patch(
-            specialize_int=True,
-            assume_static_by_default=assume_static_by_default,
-            automatic_dynamic_shapes=False,
-            capture_dynamic_output_shape_ops=True,
-            capture_scalar_outputs=True,
-            prefer_deferred_runtime_asserts_over_guards=prefer_deferred_runtime_asserts_over_guards,
-            allow_complex_guards_as_runtime_asserts=allow_complex_guards_as_runtime_asserts,
+                specialize_int=True,
+                assume_static_by_default=assume_static_by_default,
+                automatic_dynamic_shapes=False,
+                capture_dynamic_output_shape_ops=True,
+                capture_scalar_outputs=True,
+                prefer_deferred_runtime_asserts_over_guards=
+                prefer_deferred_runtime_asserts_over_guards,
+                allow_complex_guards_as_runtime_asserts=
+                allow_complex_guards_as_runtime_asserts,
         ):
             opt_f = optimize_assert(
                 dynamo_normalization_capturing_compiler,
@@ -1434,15 +1401,13 @@ def export(
                 constraint_violation_error = e
         remove_from_cache(f)
 
-        if (
-            not disable_constraint_solver
-            and (shape_env := getattr(fake_mode, "shape_env", None)) is not None
-            and (dim_constraints := shape_env.dim_constraints) is not None
-            and not isinstance(
-                call_to_inspect, (torch._ops.OpOverloadPacket, torch._ops.OpOverload)
-            )
-            and not trace_rules.check(call_to_inspect)
-        ):
+        if (not disable_constraint_solver and
+            (shape_env := getattr(fake_mode, "shape_env", None)) is not None
+                and (dim_constraints := shape_env.dim_constraints) is not None
+                and not isinstance(
+                    call_to_inspect,
+                    (torch._ops.OpOverloadPacket, torch._ops.OpOverload))
+                and not trace_rules.check(call_to_inspect)):
             dim_constraints.solve()
             forced_specializations = dim_constraints.forced_specializations()
             msg = dim_constraints.prettify_results(
@@ -1453,8 +1418,7 @@ def export(
             )
             if constraint_violation_error:
                 constraint_violation_error.args = (
-                    constraint_violation_error.args[0] + msg,
-                )
+                    constraint_violation_error.args[0] + msg, )
             else:
                 if forced_specializations:
                     constraint_violation_error = ConstraintViolationError(msg)
@@ -1471,8 +1435,7 @@ def export(
                         f"{''.join(traceback.format_list(shape_env.var_to_stack[k]))}\n"
                         "It appears that you're trying to set a constraint on a "
                         f"value which we evaluated to have a static value of {k}. "
-                        'Set TORCH_LOGS="+export" for more information.'
-                    )
+                        'Set TORCH_LOGS="+export" for more information.')
         if constraint_violation_error:
             raise constraint_violation_error
 
@@ -1488,9 +1451,8 @@ def export(
             example_inputs = []
             graph_captured_input = ()
             graph_captured_result = ()
-            fake_mode = torch._subclasses.FakeTensorMode(
-                shape_env=ShapeEnv(), export=True
-            )
+            fake_mode = torch._subclasses.FakeTensorMode(shape_env=ShapeEnv(),
+                                                         export=True)
             if out_guards is None:
                 out_guards = _guards.GuardsSet()
             assert out_guards is not None  # suppress mypy error
@@ -1500,9 +1462,9 @@ def export(
                 if torch.is_tensor(flat_args[i]):
                     node = fx_graph.placeholder(name)
                     node.meta["val"] = fake_mode.from_tensor(
-                        flat_args[i], static_shapes=True
-                    )
-                    graph_captured_input = graph_captured_input + (flat_args[i],)
+                        flat_args[i], static_shapes=True)
+                    graph_captured_input = graph_captured_input + (
+                        flat_args[i], )
                     example_inputs.append(flat_args[i])
             fx_graph.output(graph_captured_result)
             module = torch.nn.Module()
@@ -1527,15 +1489,19 @@ def export(
                 check_signature_rewritable(graph)
 
         # NB: This is mostly hitting the cache; Dynamo already converted these
-        example_fake_inputs = [fake_mode.from_tensor(t) for t in example_inputs]
+        example_fake_inputs = [
+            fake_mode.from_tensor(t) for t in example_inputs
+        ]
 
         if aten_graph:
             # Running graph with interpreter is needed for propagating the stack_trace
             def graph_with_interpreter(*args):
                 with torch.fx.traceback.preserve_node_meta():
-                    return torch.fx.Interpreter(graph).run(*args)  # type: ignore[arg-type]
+                    return torch.fx.Interpreter(graph).run(
+                        *args)  # type: ignore[arg-type]
 
-            with unset_fake_temporarily(), enable_python_dispatcher(), fake_mode:
+            with unset_fake_temporarily(), enable_python_dispatcher(
+            ), fake_mode:
                 try:
                     graph = make_fx(
                         graph_with_interpreter,
@@ -1555,23 +1521,20 @@ def export(
 
             assert graph is not None
             for node in graph.graph.find_nodes(op="get_attr"):
-                if isinstance(getattr(graph, node.target), torch.Tensor):  # type: ignore[arg-type]
+                if isinstance(getattr(graph, node.target),
+                              torch.Tensor):  # type: ignore[arg-type]
                     node.meta["val"] = fake_mode.from_tensor(
-                        getattr(graph, node.target), static_shapes=True  # type: ignore[arg-type]
+                        getattr(graph, node.target),
+                        static_shapes=True  # type: ignore[arg-type]
                     )
 
         if same_signature:
-            flat_args_dynamic_dims = [
-                {
-                    c.dim
-                    for c in (constraints or ())
-                    if (
-                        c.t_id == id(x)
-                        and c.constraint_range.vr.lower != c.constraint_range.vr.upper
-                    )
-                }
-                for x in flat_args
-            ]
+            flat_args_dynamic_dims = [{
+                c.dim
+                for c in (constraints or ())
+                if (c.t_id == id(x) and c.constraint_range.vr.lower !=
+                    c.constraint_range.vr.upper)
+            } for x in flat_args]
             graph = rewrite_signature(
                 original_signature,
                 graph,
@@ -1618,8 +1581,7 @@ def optimize_assert(
 
     return _optimize_catch_errors(
         convert_frame.convert_frame_assert(
-            backend, export=export, export_constraints=export_constraints
-        ),
+            backend, export=export, export_constraints=export_constraints),
         hooks,
         backend_ctx_ctor,
         export=export,
@@ -1629,6 +1591,7 @@ def optimize_assert(
 
 
 class TorchPatcher:
+
     @staticmethod
     @functools.lru_cache(None)
     def patch():
@@ -1641,25 +1604,12 @@ class TorchPatcher:
         torch.jit.trace_module = disable(torch.jit.trace_module)
         torch.jit._get_trace_graph = disable(torch.jit._get_trace_graph)
         torch.fx._symbolic_trace.Tracer.trace = disable(
-            torch.fx._symbolic_trace.Tracer.trace
-        )
+            torch.fx._symbolic_trace.Tracer.trace)
         torch.distributions.Distribution.set_default_validate_args(False)
 
-        from torch.optim import (
-            adadelta,
-            adagrad,
-            adam,
-            adamax,
-            adamw,
-            asgd,
-            lbfgs,
-            nadam,
-            radam,
-            rmsprop,
-            rprop,
-            sgd,
-            sparse_adam,
-        )
+        from torch.optim import (adadelta, adagrad, adam, adamax, adamw, asgd,
+                                 lbfgs, nadam, radam, rmsprop, rprop, sgd,
+                                 sparse_adam)
 
         optimizer_modules = {
             adadelta,
@@ -1683,13 +1633,11 @@ class TorchPatcher:
             single_tensor_fn_name = f"_single_tensor_{opt_name}"
 
             if hasattr(opt_mod, fused_fn_name):
-                setattr(
-                    opt_mod, fused_fn_name, disable(getattr(opt_mod, fused_fn_name))
-                )
+                setattr(opt_mod, fused_fn_name,
+                        disable(getattr(opt_mod, fused_fn_name)))
 
         optimizer_classes = [
-            opt
-            for opt in torch.optim.__dict__.values()
+            opt for opt in torch.optim.__dict__.values()
             if inspect.isclass(opt) and issubclass(opt, torch.optim.Optimizer)
         ]
 
@@ -1708,10 +1656,11 @@ class TorchPatcher:
 
     @staticmethod
     def suppress_torch_distributed_warnings(fn):
+
         def inner_fn(*args, **kwargs):
-            warnings.filterwarnings(
-                "ignore", category=UserWarning, module="torch.distributed"
-            )
+            warnings.filterwarnings("ignore",
+                                    category=UserWarning,
+                                    module="torch.distributed")
             return fn(*args, **kwargs)
 
         return inner_fn

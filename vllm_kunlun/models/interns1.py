@@ -14,13 +14,20 @@ import torch
 import torch.nn as nn
 from transformers import BatchFeature, InternVLProcessor, PretrainedConfig
 from transformers.activations import ACT2FN
-from transformers.models.got_ocr2.image_processing_got_ocr2_fast import (
-    GotOcr2ImageProcessorFast)
-
+from transformers.models.got_ocr2.image_processing_got_ocr2_fast import \
+    GotOcr2ImageProcessorFast
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.quantization import QuantizationConfig
-from .interns1_vit import InternS1VisionModel
+from vllm.model_executor.models.interfaces import (MultiModalEmbeddings,
+                                                   SupportsLoRA,
+                                                   SupportsMultiModal,
+                                                   SupportsPP)
 from vllm.model_executor.models.module_mapping import MultiModelKeys
+from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
+                                              flatten_bn,
+                                              init_vllm_registered_model,
+                                              maybe_prefix,
+                                              merge_multimodal_embeddings)
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.inputs import (MultiModalDataDict, MultiModalFieldConfig,
@@ -32,11 +39,8 @@ from vllm.multimodal.processing import (BaseMultiModalProcessor,
                                         PromptUpdate, PromptUpdateDetails)
 from vllm.multimodal.profiling import BaseDummyInputsBuilder
 from vllm.sequence import IntermediateTensors
-from vllm.model_executor.models.interfaces import (MultiModalEmbeddings, SupportsLoRA,
-                         SupportsMultiModal, SupportsPP)
-from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper, flatten_bn,
-                    init_vllm_registered_model, maybe_prefix,
-                    merge_multimodal_embeddings)
+
+from .interns1_vit import InternS1VisionModel
 
 
 class InternS1MultiModalProjector(nn.Module):
@@ -248,6 +252,7 @@ class InternS1DummyInputsBuilder(BaseDummyInputsBuilder[InternS1ProcessingInfo]
 
         return image_token * num_images + video_token * num_videos
 
+
 #     def get_dummy_mm_data(
 #         self,
 #         seq_len: int,
@@ -298,12 +303,14 @@ class InternS1DummyInputsBuilder(BaseDummyInputsBuilder[InternS1ProcessingInfo]
 
         # 统一让视频也按缩减后的分辨率生成
         return {
-            "image": self._get_dummy_images(
+            "image":
+            self._get_dummy_images(
                 width=target_width,
                 height=target_height,
                 num_images=num_images,
             ),
-            "video": self._get_dummy_videos(
+            "video":
+            self._get_dummy_videos(
                 width=target_width,
                 height=target_height,
                 num_frames=target_num_frames,

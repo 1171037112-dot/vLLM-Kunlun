@@ -38,9 +38,8 @@ from transformers.models.qwen2_vl import (Qwen2VLImageProcessor,
 from transformers.models.qwen2_vl.configuration_qwen2_vl import (
     Qwen2VLConfig, Qwen2VLVisionConfig)
 from transformers.models.qwen2_vl.image_processing_qwen2_vl import smart_resize
-from transformers.models.qwen2_vl.video_processing_qwen2_vl import (
-    Qwen2VLVideoProcessor)
-
+from transformers.models.qwen2_vl.video_processing_qwen2_vl import \
+    Qwen2VLVideoProcessor
 from vllm.config import VllmConfig
 from vllm.distributed import parallel_state, tensor_model_parallel_all_gather
 from vllm.distributed import utils as dist_utils
@@ -50,9 +49,17 @@ from vllm.model_executor.layers.activation import QuickGELU
 from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                RowParallelLinear)
 from vllm.model_executor.layers.quantization import QuantizationConfig
-
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+from vllm.model_executor.models.interfaces import (MultiModalEmbeddings,
+                                                   SupportsLoRA,
+                                                   SupportsMultiModal,
+                                                   SupportsPP)
 from vllm.model_executor.models.module_mapping import MultiModelKeys
+from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
+                                              init_vllm_registered_model,
+                                              maybe_prefix,
+                                              merge_multimodal_embeddings)
+from vllm.model_executor.models.vision import get_vit_attn_backend
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.inputs import (ImageItem, ModalityData,
                                     MultiModalDataDict, MultiModalFieldConfig,
@@ -67,17 +74,9 @@ from vllm.multimodal.profiling import BaseDummyInputsBuilder
 from vllm.platforms import _Backend, current_platform
 from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import uses_mrope
-from vllm.transformers_utils.processor import (
-    cached_image_processor_from_config)
+from vllm.transformers_utils.processor import \
+    cached_image_processor_from_config
 from vllm.transformers_utils.tokenizer import AnyTokenizer
-
-from vllm.model_executor.models.interfaces import (MultiModalEmbeddings, SupportsLoRA,
-                         SupportsMultiModal, SupportsPP)
-from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
-                    init_vllm_registered_model, maybe_prefix,
-                    merge_multimodal_embeddings)
-from vllm.model_executor.models.vision import get_vit_attn_backend
-import xspeedgate_ops
 
 logger = init_logger(__name__)
 
@@ -234,10 +233,11 @@ def apply_rotary_emb_torch(x: torch.Tensor,
 def apply_rotary_pos_emb_vision(t: torch.Tensor,
                                 freqs: torch.Tensor) -> torch.Tensor:
     t_ = t.float()
-    
+
     if freqs.dim() == 3 and freqs.shape[1] == 2:
-        return torch.ops.xspeedgate_ops.rope_vit(t_, freqs, interleaved = False).type_as(t)
-    
+        return torch.ops.xspeedgate_ops.rope_vit(t_, freqs,
+                                                 interleaved=False).type_as(t)
+
     cos = freqs.cos()
     sin = freqs.sin()
     apply_rotary_emb = apply_rotary_emb_torch
@@ -927,7 +927,9 @@ class Qwen2VLProcessingInfo(BaseProcessingInfo):
             image_processor=None,
         )
 
-    def _get_max_video_frames(self, max_tokens: int, start_num_frames: int = 1) -> int:
+    def _get_max_video_frames(self,
+                              max_tokens: int,
+                              start_num_frames: int = 1) -> int:
         target_width, target_height = self.get_image_size_with_most_features()
 
         num_frames = start_num_frames
@@ -1421,7 +1423,7 @@ class Qwen2VLForConditionalGeneration(nn.Module, SupportsMultiModal,
         # sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
         return self.language_model.compute_logits(hidden_states)
-                                                #   sampling_metadata)
+        #   sampling_metadata)
 
     def load_weights(self, weights: Iterable[tuple[str,
                                                    torch.Tensor]]) -> set[str]:

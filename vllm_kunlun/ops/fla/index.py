@@ -8,7 +8,6 @@
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 # ruff: noqa: E501
 import torch
-
 from vllm.triton_utils import triton
 
 from .utils import tensor_cache
@@ -28,6 +27,7 @@ def prepare_chunk_indices(cu_seqlens: torch.LongTensor,
     ])
     return torch.stack([indices.eq(0).cumsum(0) - 1, indices],
                        1).to(cu_seqlens)
+
 
 @tensor_cache
 def prepare_chunk_offsets(cu_seqlens: torch.LongTensor,

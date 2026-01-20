@@ -10,7 +10,6 @@ There is a graph mode supported by vLLM Kunlun:
 
 - **KunlunGraph**: This is the default graph mode supported by vLLM Kunlun. In vLLM-KunLun-0.10.1.1, Qwen, GLM and InternVL series models are well tested.
 
-
 ## Using KunlunGraph
 
 KunlunGraph is enabled by default. Take Qwen series models as an example, just set to use V1 Engine(default) is enough.
@@ -34,7 +33,7 @@ vllm serve Qwen3-8B-Instruct
 
 ## Using KunlunGraph
 
-Enabling Kunlun Graph on the Kunlun platform requires the use of splitting ops. 
+Enabling Kunlun Graph on the Kunlun platform requires the use of splitting ops.
 
 Online example:
 
@@ -64,7 +63,6 @@ python -m vllm.entrypoints.openai.api_server \
                                                 "vllm.sparse_attn_indexer"]}' \
 
 ```
-
 
 ## Fallback to the Eager Mode
 

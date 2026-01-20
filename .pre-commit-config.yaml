@@ -52,6 +52,13 @@ repos:
   rev: v1.7.7
   hooks:
   - id: actionlint
+- repo: https://github.com/pre-commit/mirrors-clang-format
+  rev: v21.1.2
+  hooks:
+  - id: clang-format
+    exclude: '^(vllm_kunlun/csrc/.*|examples/.*)$'
+    types_or: [c++, cuda]
+    args: [--style=file, --verbose]
 - repo: local
   hooks:
   # - id: mypy-3.10 # TODO: Use https://github.com/pre-commit/mirrors-mypy when mypy setup is less awkward

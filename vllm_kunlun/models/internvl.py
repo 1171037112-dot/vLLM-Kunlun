@@ -12,20 +12,27 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Annotated, Any, Literal, Optional, TypeVar, Union
 
-import numpy.typing as npt
 import numpy as np
+import numpy.typing as npt
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
 from PIL import Image
 from transformers import BatchEncoding, PretrainedConfig, TensorType
-
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.quantization.awq import AWQConfig
+from vllm.model_executor.models.interfaces import (MultiModalEmbeddings,
+                                                   SupportsLoRA,
+                                                   SupportsMultiModal,
+                                                   SupportsPP)
 from vllm.model_executor.models.intern_vit import (InternVisionModel,
                                                    InternVisionPatchModel)
 from vllm.model_executor.models.module_mapping import MultiModelKeys
+from vllm.model_executor.models.utils import (AutoWeightsLoader, flatten_bn,
+                                              init_vllm_registered_model,
+                                              maybe_prefix,
+                                              merge_multimodal_embeddings)
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.image import convert_image_mode
 from vllm.multimodal.inputs import (MultiModalDataDict, MultiModalFieldConfig,
@@ -40,11 +47,6 @@ from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.tokenizer import AnyTokenizer
 from vllm.utils import set_default_torch_num_threads
 from vllm.utils.tensor_schema import TensorSchema, TensorShape
-
-from vllm.model_executor.models.interfaces import (MultiModalEmbeddings, SupportsLoRA,
-                         SupportsMultiModal, SupportsPP)
-from vllm.model_executor.models.utils import (AutoWeightsLoader, flatten_bn, init_vllm_registered_model,
-                    maybe_prefix, merge_multimodal_embeddings)
 
 IMG_START = '<img>'
 IMG_END = '</img>'

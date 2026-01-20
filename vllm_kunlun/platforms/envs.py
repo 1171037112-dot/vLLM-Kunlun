@@ -4,11 +4,12 @@ import os
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
-    VLLM_MULTI_LOGPATH : str = "./log",
-    ENABLE_VLLM_MULTI_LOG : bool = False,
-    ENABLE_VLLM_INFER_HOOK : bool = False,
-    ENABLE_VLLM_OPS_HOOK : bool = False,
-    ENABLE_VLLM_MODULE_HOOK : bool = False
+    VLLM_MULTI_LOGPATH: str = "./log",
+    ENABLE_VLLM_MULTI_LOG: bool = False,
+    ENABLE_VLLM_INFER_HOOK: bool = False,
+    ENABLE_VLLM_OPS_HOOK: bool = False,
+    ENABLE_VLLM_MODULE_HOOK: bool = False
+
 
 def maybe_convert_int(value: Optional[str]) -> Optional[int]:
     """
@@ -24,6 +25,7 @@ def maybe_convert_int(value: Optional[str]) -> Optional[int]:
         return None
     return int(value)
 
+
 # The begin-* and end* here are used by the documentation generator
 # to extract the used env vars.
 
@@ -34,48 +36,49 @@ xvllm_environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_MULTI_LOGPATH":
     lambda: os.environ.get("VLLM_MULTI_LOGPATH", "./logs"),
 
-    # turn on / off multi-log of multi nodes & multi cards 
+    # turn on / off multi-log of multi nodes & multi cards
     "ENABLE_VLLM_MULTI_LOG":
-    lambda: (os.environ.get("ENABLE_VLLM_MULTI_LOG", "False").lower() in 
+    lambda: (os.environ.get("ENABLE_VLLM_MULTI_LOG", "False").lower() in
              ("true", "1")),
 
-    # turn on / off XVLLM infer stage log ability 
+    # turn on / off XVLLM infer stage log ability
     "ENABLE_VLLM_INFER_HOOK":
     lambda: (os.environ.get("ENABLE_VLLM_INFER_HOOK", "False").lower() in
-            ("true", "1")),
+             ("true", "1")),
 
-    # turn on / off XVLLM infer_ops log ability 
+    # turn on / off XVLLM infer_ops log ability
     "ENABLE_VLLM_OPS_HOOK":
     lambda: (os.environ.get("ENABLE_VLLM_OPS_HOOK", "False").lower() in
-            ("true", "1")),
-
+             ("true", "1")),
     "ENABLE_VLLM_MODULE_HOOK":
     lambda: (os.environ.get("ENABLE_VLLM_MODULE_HOOK", "False").lower() in
-            ("true", "1")),
+             ("true", "1")),
 
     # fuse sorted op with fused_moe kernel
     "ENABLE_VLLM_MOE_FC_SORTED":
-    lambda: (os.environ.get("ENABLE_VLLM_MOE_FC_SORTED", "False").lower() in 
+    lambda: (os.environ.get("ENABLE_VLLM_MOE_FC_SORTED", "False").lower() in
              ("true", "1")),
 
     # enable custom dpsk scaling rope
     "ENABLE_CUSTOM_DPSK_SCALING_ROPE":
-    lambda: (os.environ.get("ENABLE_CUSTOM_DPSK_SCALING_ROPE", "False").lower() in 
-             ("true", "1")),
+    lambda:
+    (os.environ.get("ENABLE_CUSTOM_DPSK_SCALING_ROPE", "False").lower() in
+     ("true", "1")),
 
     # fuse qkv split & qk norm & qk rope
     # only works for qwen3 dense and qwen3 moe models
     "ENABLE_VLLM_FUSED_QKV_SPLIT_NORM_ROPE":
-    lambda: (os.environ.get("ENABLE_VLLM_FUSED_QKV_SPLIT_NORM_ROPE", "False").lower() in 
-             ("true", "1")),
+    lambda: (os.environ.get("ENABLE_VLLM_FUSED_QKV_SPLIT_NORM_ROPE", "False").
+             lower() in ("true", "1")),
 
     # use int8 bmm
     "VLLM_KUNLUN_ENABLE_INT8_BMM":
-    lambda: (os.environ.get("VLLM_KUNLUN_ENABLE_INT8_BMM", "False").lower() in 
+    lambda: (os.environ.get("VLLM_KUNLUN_ENABLE_INT8_BMM", "False").lower() in
              ("true", "1")),
 }
 
 # end-env-vars-definition
+
 
 def __getattr__(name: str):
     """

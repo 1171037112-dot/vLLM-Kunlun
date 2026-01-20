@@ -5,58 +5,39 @@ from itertools import islice
 
 import torch
 from torch import nn
-
 from vllm.attention.backends.abstract import AttentionType
-from vllm_kunlun.ops.attention.layer import Attention
-from vllm.config import (
-    CacheConfig,
-    VllmConfig,
-    get_current_vllm_config,
-)
-from vllm.distributed import (
-    get_ep_group,
-    get_pp_group,
-    get_tensor_model_parallel_rank,
-    get_tensor_model_parallel_world_size,
-    tensor_model_parallel_all_gather,
-)
+from vllm.config import CacheConfig, VllmConfig, get_current_vllm_config
+from vllm.distributed import (get_ep_group, get_pp_group,
+                              get_tensor_model_parallel_rank,
+                              get_tensor_model_parallel_world_size)
 from vllm.logger import init_logger
-from vllm_kunlun.ops.fused_moe.layer import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
-from vllm.model_executor.layers.linear import (
-    MergedColumnParallelLinear,
-    RowParallelLinear,
-)
-from vllm_kunlun.ops.linear import QKVParallelLinear
+from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
+                                               RowParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import (
-    ParallelLMHead,
-    VocabParallelEmbedding,
-)
+    ParallelLMHead, VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import (
-    default_weight_loader,
-    maybe_remap_kv_scale_name,
-)
-from vllm.model_executor.models.utils import sequence_parallel_chunk
-from vllm.sequence import IntermediateTensors
-
+    default_weight_loader, maybe_remap_kv_scale_name)
 from vllm.model_executor.models.interfaces import MixtureOfExperts, SupportsPP
 from vllm.model_executor.models.utils import (
-    AutoWeightsLoader,
-    PPMissingLayer,
-    extract_layer_index,
-    is_pp_missing_parameter,
-    make_empty_intermediate_tensors_factory,
-    make_layers,
-    maybe_prefix,
-)
+    AutoWeightsLoader, PPMissingLayer, extract_layer_index,
+    is_pp_missing_parameter, make_empty_intermediate_tensors_factory,
+    make_layers, maybe_prefix)
+from vllm.sequence import IntermediateTensors
+
 from vllm_kunlun.ops.activation import SiluAndMul
+from vllm_kunlun.ops.attention.layer import Attention
+from vllm_kunlun.ops.fused_moe.layer import FusedMoE
+from vllm_kunlun.ops.linear import QKVParallelLinear
+
 logger = init_logger(__name__)
 
 
 class MiMoV2MLP(nn.Module):
+
     def __init__(
         self,
         hidden_size: int,
@@ -96,6 +77,7 @@ class MiMoV2MLP(nn.Module):
 
 
 class MiMoV2MoE(nn.Module):
+
     def __init__(
         self,
         vllm_config: VllmConfig,
@@ -115,18 +97,14 @@ class MiMoV2MoE(nn.Module):
         self.ep_size = self.ep_group.size()
         self.n_routed_experts = config.n_routed_experts
 
-
         if self.tp_size > config.n_routed_experts:
             raise ValueError(
                 f"Tensor parallel size {self.tp_size} is greater than "
-                f"the number of experts {config.n_routed_experts}."
-            )
+                f"the number of experts {config.n_routed_experts}.")
 
         if config.hidden_act != "silu":
-            raise ValueError(
-                f"Unsupported activation: {config.hidden_act}. "
-                "Only silu is supported for now."
-            )
+            raise ValueError(f"Unsupported activation: {config.hidden_act}. "
+                             "Only silu is supported for now.")
 
         vllm_config = get_current_vllm_config()
         eplb_config = vllm_config.parallel_config.eplb_config
@@ -138,9 +116,8 @@ class MiMoV2MoE(nn.Module):
         self.n_local_physical_experts = self.n_physical_experts // self.ep_size
 
         self.physical_expert_start = self.ep_rank * self.n_local_physical_experts
-        self.physical_expert_end = (
-            self.physical_expert_start + self.n_local_physical_experts
-        )
+        self.physical_expert_end = (self.physical_expert_start +
+                                    self.n_local_physical_experts)
 
         self.gate_dtype = torch.float32
         self.gate = nn.Linear(
@@ -150,8 +127,7 @@ class MiMoV2MoE(nn.Module):
             dtype=self.gate_dtype,
         )
         self.gate.e_score_correction_bias = nn.Parameter(
-            torch.empty(config.n_routed_experts, dtype=self.gate_dtype)
-        )
+            torch.empty(config.n_routed_experts, dtype=self.gate_dtype))
 
         self.experts = FusedMoE(
             num_experts=self.n_routed_experts,
@@ -170,11 +146,15 @@ class MiMoV2MoE(nn.Module):
             topk_group=config.topk_group,
             scoring_func="sigmoid",
         )
-        self.register_buffer("kunlun_linear_weights", torch.zeros(
-            config.num_local_experts,config.hidden_size,dtype=torch.float))
+        self.register_buffer(
+            "kunlun_linear_weights",
+            torch.zeros(config.num_local_experts,
+                        config.hidden_size,
+                        dtype=torch.float))
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        assert hidden_states.dim() <= 2, "MiMoV2MoE only supports 1D or 2D inputs"
+        assert hidden_states.dim(
+        ) <= 2, "MiMoV2MoE only supports 1D or 2D inputs"
         is_input_1d = hidden_states.dim() == 1
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
@@ -184,13 +164,15 @@ class MiMoV2MoE(nn.Module):
         else:
             gate_input = hidden_states
         router_logits = self.gate(gate_input)
-        final_hidden_states = self.experts(
-            hidden_states=hidden_states, router_logits=router_logits)
+        final_hidden_states = self.experts(hidden_states=hidden_states,
+                                           router_logits=router_logits)
 
-        return final_hidden_states.squeeze(0) if is_input_1d else final_hidden_states
+        return final_hidden_states.squeeze(
+            0) if is_input_1d else final_hidden_states
 
 
 class MiMoV2Attention(nn.Module):
+
     def __init__(
         self,
         hidden_size: int,
@@ -252,19 +234,15 @@ class MiMoV2Attention(nn.Module):
             prefix=f"{prefix}.o_proj",
         )
 
-        self.rotary_emb = get_rope(
-            self.head_dim,
-            rotary_dim=self.head_dim,
-            max_position=max_position_embeddings,
-            base=self.rope_theta,
-            partial_rotary_factor=partial_rotary_factor
-        )
+        self.rotary_emb = get_rope(self.head_dim,
+                                   rotary_dim=self.head_dim,
+                                   max_position=max_position_embeddings,
+                                   base=self.rope_theta,
+                                   partial_rotary_factor=partial_rotary_factor)
 
-        self.attention_sink_bias = (
-            torch.nn.Parameter(torch.empty(self.num_heads), requires_grad=False)
-            if add_swa_attention_sink_bias
-            else None
-        )
+        self.attention_sink_bias = (torch.nn.Parameter(
+            torch.empty(self.num_heads), requires_grad=False)
+                                    if add_swa_attention_sink_bias else None)
 
         sliding_window = sliding_window_size if sliding_window_size > -1 else None
         self.attn = Attention(
@@ -290,20 +268,22 @@ class MiMoV2Attention(nn.Module):
         q, k = self.rotary_emb(positions, q, k)
 
         v = v.view(-1, self.num_kv_heads, self.v_head_dim)
-        v = torch.nn.functional.pad(v, [0, self.head_dim - self.v_head_dim], value=0)
+        v = torch.nn.functional.pad(v, [0, self.head_dim - self.v_head_dim],
+                                    value=0)
         v = v.view(-1, self.num_kv_heads * self.head_dim)
 
         attn_output = self.attn(q, k, v)
 
-        attn_output = attn_output.view(-1, self.num_heads, self.head_dim)[
-            ..., : self.v_head_dim
-        ].reshape(-1, self.num_heads * self.v_head_dim)
+        attn_output = attn_output.view(
+            -1, self.num_heads, self.head_dim)[..., :self.v_head_dim].reshape(
+                -1, self.num_heads * self.v_head_dim)
 
         output, _ = self.o_proj(attn_output)
         return output
 
 
 class MiMoV2FlashDecoderLayer(nn.Module):
+
     def __init__(self, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
         config = vllm_config.model_config.hf_text_config
@@ -315,7 +295,8 @@ class MiMoV2FlashDecoderLayer(nn.Module):
         self.layer_id = layer_id
 
         rope_theta = getattr(config, "rope_theta", 1000000)
-        max_position_embeddings = getattr(config, "max_position_embeddings", 32768)
+        max_position_embeddings = getattr(config, "max_position_embeddings",
+                                          32768)
 
         if self.is_compressed_softmax_layer():
             self.self_attn = MiMoV2Attention(
@@ -327,13 +308,13 @@ class MiMoV2FlashDecoderLayer(nn.Module):
                 sliding_window_size=config.sliding_window_size,
                 attention_bias=config.attention_bias,
                 add_swa_attention_sink_bias=getattr(
-                    config, "add_swa_attention_sink_bias", False
-                ),
+                    config, "add_swa_attention_sink_bias", False),
                 layer_id=layer_id,
                 rope_theta=getattr(config, "swa_rope_theta", rope_theta),
                 max_position_embeddings=max_position_embeddings,
                 quant_config=quant_config,
-                partial_rotary_factor=getattr(config, "partial_rotary_factor", 1.0),
+                partial_rotary_factor=getattr(config, "partial_rotary_factor",
+                                              1.0),
                 prefix=f"{prefix}.self_attn",
             )
         else:
@@ -349,7 +330,8 @@ class MiMoV2FlashDecoderLayer(nn.Module):
                 rope_theta=rope_theta,
                 max_position_embeddings=max_position_embeddings,
                 quant_config=quant_config,
-                partial_rotary_factor=getattr(config, "partial_rotary_factor", 1.0),
+                partial_rotary_factor=getattr(config, "partial_rotary_factor",
+                                              1.0),
                 prefix=f"{prefix}.self_attn",
             )
 
@@ -368,10 +350,10 @@ class MiMoV2FlashDecoderLayer(nn.Module):
                 prefix=f"{prefix}.mlp",
             )
 
-        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.layernorm_epsilon)
-        self.post_attention_layernorm = RMSNorm(
-            config.hidden_size, eps=config.layernorm_epsilon
-        )
+        self.input_layernorm = RMSNorm(config.hidden_size,
+                                       eps=config.layernorm_epsilon)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size,
+                                                eps=config.layernorm_epsilon)
 
     def forward(
         self,
@@ -383,30 +365,30 @@ class MiMoV2FlashDecoderLayer(nn.Module):
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+            hidden_states, residual = self.input_layernorm(
+                hidden_states, residual)
 
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
         )
 
-        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
+        hidden_states, residual = self.post_attention_layernorm(
+            hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
     def is_moe_layer(self, layer_idx: int) -> bool:
-        return (
-            hasattr(self.config, "moe_layer_freq")
-            and layer_idx >= 0
-            and not isinstance(self.config.moe_layer_freq, int)
-            and self.config.moe_layer_freq[layer_idx]
-        )
+        return (hasattr(self.config, "moe_layer_freq") and layer_idx >= 0
+                and not isinstance(self.config.moe_layer_freq, int)
+                and self.config.moe_layer_freq[layer_idx])
 
     def is_compressed_softmax_layer(self) -> bool:
         return self.config.hybrid_layer_pattern[self.layer_id] == 1
 
 
 class MiMoV2Model(nn.Module):
+
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
 
@@ -420,9 +402,8 @@ class MiMoV2Model(nn.Module):
         self.num_redundant_experts = eplb_config.num_redundant_experts
         self.v_scale = getattr(config, "attention_value_scale", None)
 
-        if get_pp_group().is_first_rank or (
-            config.tie_word_embeddings and get_pp_group().is_last_rank
-        ):
+        if get_pp_group().is_first_rank or (config.tie_word_embeddings
+                                            and get_pp_group().is_last_rank):
             self.embed_tokens = VocabParallelEmbedding(
                 config.vocab_size,
                 config.hidden_size,
@@ -442,10 +423,10 @@ class MiMoV2Model(nn.Module):
         )
 
         self.make_empty_intermediate_tensors = make_empty_intermediate_tensors_factory(
-            ["hidden_states", "residual"], config.hidden_size
-        )
+            ["hidden_states", "residual"], config.hidden_size)
         if get_pp_group().is_last_rank:
-            self.norm = RMSNorm(config.hidden_size, eps=config.layernorm_epsilon)
+            self.norm = RMSNorm(config.hidden_size,
+                                eps=config.layernorm_epsilon)
         else:
             self.norm = PPMissingLayer()
 
@@ -471,14 +452,14 @@ class MiMoV2Model(nn.Module):
             residual = intermediate_tensors["residual"]
 
         for idx, layer in enumerate(
-            islice(self.layers, self.start_layer, self.end_layer)
-        ):
+                islice(self.layers, self.start_layer, self.end_layer)):
             hidden_states, residual = layer(positions, hidden_states, residual)
 
         if not get_pp_group().is_last_rank:
-            return IntermediateTensors(
-                {"hidden_states": hidden_states, "residual": residual}
-            )
+            return IntermediateTensors({
+                "hidden_states": hidden_states,
+                "residual": residual
+            })
 
         hidden_states, _ = self.norm(hidden_states, residual)
 
@@ -495,7 +476,8 @@ class MiMoV2Model(nn.Module):
             num_redundant_experts=self.num_redundant_experts,
         )
 
-    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+    def load_weights(self, weights: Iterable[tuple[str,
+                                                   torch.Tensor]]) -> set[str]:
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
             ("qkv_proj", "q_proj", "q"),
@@ -523,9 +505,8 @@ class MiMoV2Model(nn.Module):
                 cache_scale_name = self.quant_config.get_cache_scale(name)
                 if cache_scale_name is not None and cache_scale_name in params_dict:
                     param = params_dict[cache_scale_name]
-                    weight_loader = getattr(
-                        param, "weight_loader", default_weight_loader
-                    )
+                    weight_loader = getattr(param, "weight_loader",
+                                            default_weight_loader)
 
                     kv_scale = loaded_weight
                     if kv_scale.dim() > 0 and kv_scale.numel() > 1:
@@ -545,9 +526,9 @@ class MiMoV2Model(nn.Module):
                 if is_pp_missing_parameter(name_rewritten, self):
                     continue
 
-                if (
-                    name_rewritten.endswith(".bias") or name_rewritten.endswith("_bias")
-                ) and name_rewritten not in params_dict:
+                if (name_rewritten.endswith(".bias")
+                        or name_rewritten.endswith("_bias")
+                    ) and name_rewritten not in params_dict:
                     continue
 
                 if name_rewritten not in params_dict:
@@ -576,10 +557,8 @@ class MiMoV2Model(nn.Module):
                     continue
                 name_rewritten = name.replace(weight_name, param_name)
 
-                if (
-                    name_rewritten.endswith(".bias")
-                    and name_rewritten not in params_dict
-                ):
+                if (name_rewritten.endswith(".bias")
+                        and name_rewritten not in params_dict):
                     continue
 
                 if is_pp_missing_parameter(name_rewritten, self):
@@ -589,17 +568,16 @@ class MiMoV2Model(nn.Module):
                     continue
 
                 param = params_dict[name_rewritten]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                weight_loader = getattr(param, "weight_loader",
+                                        default_weight_loader)
 
                 if param_name == "qkv_proj" and shard_id == "v":
-                    v_scale = (
-                        self.v_scale
-                        if self.v_scale is not None
-                        else getattr(self.config, "attention_value_scale", None)
-                    )
+                    v_scale = (self.v_scale
+                               if self.v_scale is not None else getattr(
+                                   self.config, "attention_value_scale", None))
                     if v_scale is not None and (
-                        name.endswith("weight_scale_inv") or name.endswith(".bias")
-                    ):
+                            name.endswith("weight_scale_inv")
+                            or name.endswith(".bias")):
                         loaded_weight *= float(v_scale)
 
                 weight_loader(param, loaded_weight, shard_id)
@@ -627,12 +605,14 @@ class MiMoV2Model(nn.Module):
                 total_heads = loaded_weight.shape[0]
                 heads_per_rank = total_heads // tp_size
                 head_start = tp_rank * heads_per_rank
-                narrow_weight = loaded_weight.narrow(0, head_start, heads_per_rank)
+                narrow_weight = loaded_weight.narrow(0, head_start,
+                                                     heads_per_rank)
 
                 param.data.copy_(narrow_weight)
                 loaded_params.add(name)
             else:
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                weight_loader = getattr(param, "weight_loader",
+                                        default_weight_loader)
                 weight_loader(param, loaded_weight)
                 loaded_params.add(name)
 
@@ -640,6 +620,7 @@ class MiMoV2Model(nn.Module):
 
 
 class MiMoV2FlashForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
+
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
         config = vllm_config.model_config.hf_config
@@ -665,8 +646,7 @@ class MiMoV2FlashForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         self.logits_processor = LogitsProcessor(config.vocab_size)
 
         self.make_empty_intermediate_tensors = (
-            self.model.make_empty_intermediate_tensors
-        )
+            self.model.make_empty_intermediate_tensors)
 
     def set_aux_hidden_state_layers(self, layers: tuple[int, ...]) -> None:
         self.model.aux_hidden_state_layers = layers
@@ -685,9 +665,8 @@ class MiMoV2FlashForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
-        hidden_states = self.model(
-            input_ids, positions, intermediate_tensors, inputs_embeds
-        )
+        hidden_states = self.model(input_ids, positions, intermediate_tensors,
+                                   inputs_embeds)
         return hidden_states
 
     def compute_logits(
@@ -700,6 +679,7 @@ class MiMoV2FlashForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
         return self.model.get_expert_mapping()
 
-    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+    def load_weights(self, weights: Iterable[tuple[str,
+                                                   torch.Tensor]]) -> set[str]:
         loader = AutoWeightsLoader(self)
         return loader.load_weights(weights)

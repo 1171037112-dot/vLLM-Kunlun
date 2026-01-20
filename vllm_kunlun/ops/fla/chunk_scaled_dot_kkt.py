@@ -10,13 +10,9 @@
 from typing import Optional
 
 import torch
-
 from vllm.triton_utils import tl, triton
 
 from .index import prepare_chunk_indices
-from .op import exp
-
-
 
 
 @triton.heuristics({
@@ -79,7 +75,7 @@ def chunk_scaled_dot_kkt_fwd_kernel(
                                 (i_t * BT, ), (BT, ), (0, ))
         b_g = tl.load(p_g, boundary_check=(0, ))
         b_g_diff = b_g[:, None] - b_g[None, :]
-        b_A = b_A * tl.exp(b_g_diff) # 使用了triton而非vllm中的exp
+        b_A = b_A * tl.exp(b_g_diff)  # 使用了triton而非vllm中的exp
 
     #m_A = (o_t[:, None] > o_t[None, :]) & (m_t[:, None] & m_t)
     #b_A = tl.where(m_A, b_A, 0)

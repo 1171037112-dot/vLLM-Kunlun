@@ -3,7 +3,6 @@
 
 import numpy as np
 import torch
-
 from vllm.logger import init_logger
 from vllm.utils import cdiv
 

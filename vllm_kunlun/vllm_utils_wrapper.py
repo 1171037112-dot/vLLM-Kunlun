@@ -1,16 +1,17 @@
 """vllm_utils_wrapper.py"""
 
-import vllm.distributed.parallel_state as parallel_state
-import vllm.utils as _orig
-from typing import Any, Callable, Optional, Union, get_origin, get_args, List, Tuple
-from types import SimpleNamespace
-import torch
-from torch.library import Library
 import inspect
 import typing
-from torch.library import register_fake
-import vllm_kunlun._kunlun
+from types import SimpleNamespace
+from typing import (Any, Callable, List, Optional, Tuple, Union, get_args,
+                    get_origin)
+
+import torch
+import vllm.distributed.parallel_state as parallel_state
 import vllm.envs as envs
+import vllm.utils as _orig
+from torch.library import Library, register_fake
+
 
 def patch_annotations_for_schema(func):
     """patch_annotations_for_schema"""
@@ -24,7 +25,8 @@ def patch_annotations_for_schema(func):
             inner_type = [a for a in get_args(ann) if a is not type(None)][0]
             if get_origin(inner_type) is list:  # Optional[list[int]]
                 inner_args = get_args(inner_type)
-                new_ann = Optional[List[inner_args[0] if inner_args else typing.Any]]
+                new_ann = Optional[
+                    List[inner_args[0] if inner_args else typing.Any]]
                 param = param.replace(annotation=new_ann)
 
         elif get_origin(ann) is list:
@@ -47,13 +49,13 @@ vllm_lib = Library("vllm", "FRAGMENT")  # noqa
 
 
 def direct_register_custom_op(
-    op_name: str,
-    op_func: Callable,
-    mutates_args: Optional[list[str]] = None,
-    fake_impl: Optional[Callable] = None,
-    target_lib: Optional[Library] = None,
-    dispatch_key: str = "CUDA",
-    tags: tuple[torch.Tag, ...] = (),
+        op_name: str,
+        op_func: Callable,
+        mutates_args: Optional[list[str]] = None,
+        fake_impl: Optional[Callable] = None,
+        target_lib: Optional[Library] = None,
+        dispatch_key: str = "CUDA",
+        tags: tuple[torch.Tag, ...] = (),
 ):
     """
     `torch.library.custom_op` can have significant overhead because it
@@ -78,8 +80,7 @@ def direct_register_custom_op(
             "chances are you are using an old version of pytorch "
             "or a custom build of pytorch. It is recommended to "
             "use vLLM in a fresh new environment and let it install "
-            "the required dependencies."
-        )
+            "the required dependencies.")
         return
     if mutates_args is None:
         mutates_args = []
@@ -87,7 +88,8 @@ def direct_register_custom_op(
 
     if hasattr(torch.library, "infer_schema"):
         patched_func = patch_annotations_for_schema(op_func)
-        schema_str = torch.library.infer_schema(op_func, mutates_args=mutates_args)
+        schema_str = torch.library.infer_schema(op_func,
+                                                mutates_args=mutates_args)
     else:
         # for pytorch 2.4
         import torch._custom_op.impl
@@ -128,7 +130,10 @@ def vllm_kunlun_weak_ref_tensors(
         return tuple(vllm_kunlun_weak_ref_tensor(t) for t in tensors)
     raise ValueError("Invalid type for tensors")
 
-vllm_port=envs.VLLM_PORT
+
+vllm_port = envs.VLLM_PORT
+
+
 def _get_open_port() -> int:
     global vllm_port
     try:
@@ -141,6 +146,7 @@ def _get_open_port() -> int:
         with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
             s.bind(("", 0))
             return s.getsockname()[1]
+
 
 _wrapped = SimpleNamespace(**_orig.__dict__)
 _wrapped.direct_register_custom_op = direct_register_custom_op
@@ -165,7 +171,9 @@ def vllm_kunlun_all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
     return input_
 
 
-def vllm_kunlun_all_gather(self, input_: torch.Tensor, dim: int = -1) -> torch.Tensor:
+def vllm_kunlun_all_gather(self,
+                           input_: torch.Tensor,
+                           dim: int = -1) -> torch.Tensor:
     """vllm_kunlun_all_reduce"""
     world_size = self.world_size
     # Bypass the function if we are using only 1 GPU.
@@ -180,30 +188,28 @@ def vllm_kunlun_all_gather(self, input_: torch.Tensor, dim: int = -1) -> torch.T
         dim += input_.dim()
     input_size = input_.size()
     # Allocate output tensor.
-    output_tensor = torch.empty(
-        (world_size,) + input_size, dtype=input_.dtype, device=input_.device
-    )
+    output_tensor = torch.empty((world_size, ) + input_size,
+                                dtype=input_.dtype,
+                                device=input_.device)
     # All-gather.
-    torch.distributed.all_gather_into_tensor(
-        output_tensor, input_, group=self.device_group
-    )
+    torch.distributed.all_gather_into_tensor(output_tensor,
+                                             input_,
+                                             group=self.device_group)
     # Reshape
     output_tensor = output_tensor.movedim(0, dim)
-    output_tensor = output_tensor.reshape(
-        input_size[:dim] + (world_size * input_size[dim],) + input_size[dim + 1 :]
-    )
+    output_tensor = output_tensor.reshape(input_size[:dim] +
+                                          (world_size * input_size[dim], ) +
+                                          input_size[dim + 1:])
     return output_tensor
 
 
 parallel_state.GroupCoordinator.all_reduce = vllm_kunlun_all_reduce
 parallel_state.GroupCoordinator.all_gather = vllm_kunlun_all_gather
 
+from typing import Optional
 
-from torch.library import custom_op, impl
 import torch
-from vllm import _custom_ops as ops
-from typing import Optional, List
-import os
+from torch.library import custom_op, impl
 
 
 @custom_op("_C::rms_norm", mutates_args=())
@@ -231,30 +237,26 @@ def fused_add_rms_norm(
 
 
 @custom_op("_C::static_scaled_fp8_quant", mutates_args=())
-def static_scaled_fp8_quant(
-    result: torch.Tensor, input: torch.Tensor, scale: torch.Tensor
-) -> None:
+def static_scaled_fp8_quant(result: torch.Tensor, input: torch.Tensor,
+                            scale: torch.Tensor) -> None:
     pass
 
 
 @impl("_C::static_scaled_fp8_quant", "CUDA")
-def static_scaled_fp8_quant_xpu(
-    result: torch.Tensor, input: torch.Tensor, scale: torch.Tensor
-) -> None:
+def static_scaled_fp8_quant_xpu(result: torch.Tensor, input: torch.Tensor,
+                                scale: torch.Tensor) -> None:
     pass
 
 
 @custom_op("_C::dynamic_scaled_fp8_quant", mutates_args=())
-def dynamic_scaled_fp8_quant(
-    result: torch.Tensor, input: torch.Tensor, scale: torch.Tensor
-) -> None:
+def dynamic_scaled_fp8_quant(result: torch.Tensor, input: torch.Tensor,
+                             scale: torch.Tensor) -> None:
     pass
 
 
 @impl("_C::dynamic_scaled_fp8_quant", "CUDA")
-def dynamic_scaled_fp8_quant_xpu(
-    result: torch.Tensor, input: torch.Tensor, scale: torch.Tensor
-) -> None:
+def dynamic_scaled_fp8_quant_xpu(result: torch.Tensor, input: torch.Tensor,
+                                 scale: torch.Tensor) -> None:
     pass
 
 
@@ -613,7 +615,6 @@ split_norm_rope_neox.register_fake(_fake_split_norm_rope_neox)
 
 # register fake op impl here
 # for torch.dynamo
-from torch.library import register_fake
 
 if hasattr(torch.ops.custom_ops, "fc_fusion"):
 
@@ -635,9 +636,10 @@ if hasattr(torch.ops.custom_ops, "fc_fusion"):
 
 
 @custom_op("_C::silu_and_mul", mutates_args=())
-def silu_and_mul(
-    out: torch.Tensor, x: torch.Tensor, axis: int = -1, turn: bool = True
-) -> None:
+def silu_and_mul(out: torch.Tensor,
+                 x: torch.Tensor,
+                 axis: int = -1,
+                 turn: bool = True) -> None:
     xtorch_ops.swiglu(
         x=x,
         y=out,
@@ -645,18 +647,20 @@ def silu_and_mul(
 
 
 @impl("_C::silu_and_mul", "CUDA")
-def silu_and_mul_cuda(
-    out: torch.Tensor, x: torch.Tensor, axis: int = -1, turn: bool = True
-) -> None:
+def silu_and_mul_cuda(out: torch.Tensor,
+                      x: torch.Tensor,
+                      axis: int = -1,
+                      turn: bool = True) -> None:
     xtorch_ops.swiglu(
         x=x,
         y=out,
     )
 
 
-def _fake_silu_and_mul(
-    out: torch.Tensor, x: torch.Tensor, axis: int = -1, turn: bool = True
-):
+def _fake_silu_and_mul(out: torch.Tensor,
+                       x: torch.Tensor,
+                       axis: int = -1,
+                       turn: bool = True):
     return None
 
 
@@ -988,9 +992,9 @@ def gemm_I8_I8_bf16_nt(
     weight_scale: torch.Tensor,
     out: torch.Tensor,
 ) -> None:
-    xtorch_ops.gemm_I8_I8_bf16_nt(
-        lhs=(x_q, x_scale), rhs=(weight, weight_scale), out=out
-    )
+    xtorch_ops.gemm_I8_I8_bf16_nt(lhs=(x_q, x_scale),
+                                  rhs=(weight, weight_scale),
+                                  out=out)
 
 
 @impl("_C::gemm_I8_I8_bf16_nt", "CUDA")
@@ -1001,9 +1005,9 @@ def gemm_I8_I8_bf16_nt_cuda(
     weight_scale: torch.Tensor,
     out: torch.Tensor,
 ) -> None:
-    xtorch_ops.gemm_I8_I8_bf16_nt(
-        lhs=(x_q, x_scale), rhs=(weight, weight_scale), out=out
-    )
+    xtorch_ops.gemm_I8_I8_bf16_nt(lhs=(x_q, x_scale),
+                                  rhs=(weight, weight_scale),
+                                  out=out)
 
 
 def _fake_gemm_I8_I8_bf16_nt(
@@ -1027,9 +1031,8 @@ def moe_softmax_topk_norm(
     block_statistic: torch.Tensor,
     stable: bool = True,
 ) -> None:
-    xtorch_ops.moe_softmax_topk_norm(
-        x, normed_score, topk_index, block_statistic, stable
-    )
+    xtorch_ops.moe_softmax_topk_norm(x, normed_score, topk_index,
+                                     block_statistic, stable)
 
 
 @impl("_C::moe_softmax_topk_norm", "CUDA")
@@ -1040,9 +1043,8 @@ def moe_softmax_topk_norm_cuda(
     block_statistic: torch.Tensor,
     stable: bool = True,
 ) -> None:
-    xtorch_ops.moe_softmax_topk_norm(
-        x, normed_score, topk_index, block_statistic, stable
-    )
+    xtorch_ops.moe_softmax_topk_norm(x, normed_score, topk_index,
+                                     block_statistic, stable)
 
 
 def _fake_moe_softmax_topk_norm(
@@ -1059,20 +1061,19 @@ moe_softmax_topk_norm.register_fake(_fake_moe_softmax_topk_norm)
 
 
 @custom_op("_C::gen_block_statistic", mutates_args=())
-def gen_block_statistic(topk_ids: torch.Tensor, block_statistic: torch.Tensor) -> None:
+def gen_block_statistic(topk_ids: torch.Tensor,
+                        block_statistic: torch.Tensor) -> None:
     xtorch_ops.gen_block_statistic(topk_ids, block_statistic)
 
 
 @impl("_C::gen_block_statistic", "CUDA")
-def gen_block_statistic_cuda(
-    topk_ids: torch.Tensor, block_statistic: torch.Tensor
-) -> None:
+def gen_block_statistic_cuda(topk_ids: torch.Tensor,
+                             block_statistic: torch.Tensor) -> None:
     xtorch_ops.gen_block_statistic(topk_ids, block_statistic)
 
 
-def fake_gen_block_statistic(
-    topk_ids: torch.Tensor, block_statistic: torch.Tensor
-) -> None:
+def fake_gen_block_statistic(topk_ids: torch.Tensor,
+                             block_statistic: torch.Tensor) -> None:
     return None
 
 
@@ -1432,9 +1433,9 @@ def awq_gemm(
     zeros: torch.Tensor,
     align_type: int = 1,
 ) -> torch.Tensor:
-    out = torch.empty(
-        (x.shape[0], qweight.shape[1] * 8), dtype=torch.float16, device=x.device
-    )
+    out = torch.empty((x.shape[0], qweight.shape[1] * 8),
+                      dtype=torch.float16,
+                      device=x.device)
     group_size = int(qweight.shape[0] / scale.shape[0])
     xtorch_ops.awq_gemm(
         x=x,
@@ -1456,9 +1457,9 @@ def awq_gemm_cuda(
     zeros: torch.Tensor,
     align_type: int = 1,
 ) -> torch.Tensor:
-    out = torch.empty(
-        (x.shape[0], qweight.shape[1] * 8), dtype=torch.float16, device=x.device
-    )
+    out = torch.empty((x.shape[0], qweight.shape[1] * 8),
+                      dtype=torch.float16,
+                      device=x.device)
     group_size = int(qweight.shape[0] / scale.shape[0])
     xtorch_ops.awq_gemm(
         x=x,
@@ -1479,9 +1480,9 @@ def _fake_awq_gemm(
     zeros: torch.Tensor,
     align_type: int = 1,
 ) -> torch.Tensor:
-    out = torch.empty(
-        (x.shape[0], qweight.shape[1] * 8), dtype=torch.float16, device=x.device
-    )
+    out = torch.empty((x.shape[0], qweight.shape[1] * 8),
+                      dtype=torch.float16,
+                      device=x.device)
     return out
 
 
@@ -1525,10 +1526,11 @@ gptq_shuffle.register_fake(_fake_gptq_shuffle)
 ##################################################
 @custom_op("_C::concat_and_cache_mla", mutates_args=())
 def concat_and_cache_mla(
-    kv_c: torch.Tensor,  # [num_tokens, kv_lora_rank]
-    k_pe: torch.Tensor,  # [num_tokens, pe_dim]
-    kv_cache: torch.Tensor,  # [num_blocks, block_size, (kv_lora_rank + pe_dim)]
-    slot_mapping: torch.Tensor,  # [num_tokens] or [num_actual_tokens]
+        kv_c: torch.Tensor,  # [num_tokens, kv_lora_rank]
+        k_pe: torch.Tensor,  # [num_tokens, pe_dim]
+        kv_cache: torch.
+    Tensor,  # [num_blocks, block_size, (kv_lora_rank + pe_dim)]
+        slot_mapping: torch.Tensor,  # [num_tokens] or [num_actual_tokens]
 ) -> None:
     xtorch_ops.concat_and_cache_mla(
         kv_c=kv_c,
@@ -1540,10 +1542,11 @@ def concat_and_cache_mla(
 
 @impl("_C::concat_and_cache_mla", "CUDA")
 def concat_and_cache_mla_cuda(
-    kv_c: torch.Tensor,  # [num_tokens, kv_lora_rank]
-    k_pe: torch.Tensor,  # [num_tokens, pe_dim]
-    kv_cache: torch.Tensor,  # [num_blocks, block_size, (kv_lora_rank + pe_dim)]
-    slot_mapping: torch.Tensor,  # [num_tokens] or [num_actual_tokens]
+        kv_c: torch.Tensor,  # [num_tokens, kv_lora_rank]
+        k_pe: torch.Tensor,  # [num_tokens, pe_dim]
+        kv_cache: torch.
+    Tensor,  # [num_blocks, block_size, (kv_lora_rank + pe_dim)]
+        slot_mapping: torch.Tensor,  # [num_tokens] or [num_actual_tokens]
 ) -> None:
     xtorch_ops.concat_and_cache_mla(
         kv_c=kv_c,
@@ -1554,10 +1557,11 @@ def concat_and_cache_mla_cuda(
 
 
 def _fake_concat_and_cache_mla(
-    kv_c: torch.Tensor,  # [num_tokens, kv_lora_rank]
-    k_pe: torch.Tensor,  # [num_tokens, pe_dim]
-    kv_cache: torch.Tensor,  # [num_blocks, block_size, (kv_lora_rank + pe_dim)]
-    slot_mapping: torch.Tensor,  # [num_tokens] or [num_actual_tokens]
+        kv_c: torch.Tensor,  # [num_tokens, kv_lora_rank]
+        k_pe: torch.Tensor,  # [num_tokens, pe_dim]
+        kv_cache: torch.
+    Tensor,  # [num_blocks, block_size, (kv_lora_rank + pe_dim)]
+        slot_mapping: torch.Tensor,  # [num_tokens] or [num_actual_tokens]
 ) -> None:
     return None
 
@@ -1581,17 +1585,19 @@ def scaled_int8_quant(
         static = True
         torch.ops.xspeedgate_ops.static_scaled_int8_quant(x_q, x, scale, azp)
     else:  # dynamic
-        scale = torch.empty(
-            (x.numel() // x.shape[-1], 1), device=x.device, dtype=torch.float32
-        )
+        scale = torch.empty((x.numel() // x.shape[-1], 1),
+                            device=x.device,
+                            dtype=torch.float32)
         azp = None if symmetric else torch.empty_like(scale, dtype=torch.int32)
         if symmetric:
             # NOTE: For quant2d ops, scale represents max.
-            xtorch_ops.quant2d(x=x.contiguous(), y=x_q, max=scale, force_sdnn=True)
+            xtorch_ops.quant2d(x=x.contiguous(),
+                               y=x_q,
+                               max=scale,
+                               force_sdnn=True)
         else:
             torch.ops.xspeedgate_ops.dynamic_scaled_int8_quant(
-                x_q, x.contiguous(), scale, azp
-            )
+                x_q, x.contiguous(), scale, azp)
     return x_q, scale, azp, static
 
 
@@ -1608,17 +1614,19 @@ def scaled_int8_quant_cuda(
         static = True
         torch.ops.xspeedgate_ops.static_scaled_int8_quant(x_q, x, scale, azp)
     else:  # dynamic
-        scale = torch.empty(
-            (x.numel() // x.shape[-1], 1), device=x.device, dtype=torch.float32
-        )
+        scale = torch.empty((x.numel() // x.shape[-1], 1),
+                            device=x.device,
+                            dtype=torch.float32)
         azp = None if symmetric else torch.empty_like(scale, dtype=torch.int32)
         if symmetric:
             # NOTE: For quant2d ops, scale represents max.
-            xtorch_ops.quant2d(x=x.contiguous(), y=x_q, max=scale, force_sdnn=True)
+            xtorch_ops.quant2d(x=x.contiguous(),
+                               y=x_q,
+                               max=scale,
+                               force_sdnn=True)
         else:
             torch.ops.xspeedgate_ops.dynamic_scaled_int8_quant(
-                x_q, x.contiguous(), scale, azp
-            )
+                x_q, x.contiguous(), scale, azp)
     return x_q, scale, azp, static
 
 
@@ -1629,9 +1637,9 @@ def _fake_scaled_int8_quant(
     symmetric: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]:
     x_q = torch.empty_like(x, dtype=torch.int8, device=x.device)
-    scale = torch.empty(
-        (x.numel() // x.shape[-1], 1), device=x.device, dtype=torch.float32
-    )
+    scale = torch.empty((x.numel() // x.shape[-1], 1),
+                        device=x.device,
+                        dtype=torch.float32)
     azp = None if symmetric else torch.empty_like(scale, dtype=torch.int32)
     return x_q, scale, azp, False
 
@@ -1651,10 +1659,12 @@ def cutlass_scaled_mm(
     out_dtype: torch.dtype,
     bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    out = torch.empty((a.shape[0], b.shape[1]), dtype=out_dtype, device=a.device)
-    torch.ops.xspeedgate_ops.cutlass_scaled_mm(
-        out, a.contiguous(), b.contiguous(), scale_a, scale_b, bias
-    )
+    out = torch.empty((a.shape[0], b.shape[1]),
+                      dtype=out_dtype,
+                      device=a.device)
+    torch.ops.xspeedgate_ops.cutlass_scaled_mm(out, a.contiguous(),
+                                               b.contiguous(), scale_a,
+                                               scale_b, bias)
     return out
 
 
@@ -1667,10 +1677,12 @@ def cutlass_scaled_mm_cuda(
     out_dtype: torch.dtype,
     bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    out = torch.empty((a.shape[0], b.shape[1]), dtype=out_dtype, device=a.device)
-    torch.ops.xspeedgate_ops.cutlass_scaled_mm(
-        out, a.contiguous(), b.contiguous(), scale_a, scale_b, bias
-    )
+    out = torch.empty((a.shape[0], b.shape[1]),
+                      dtype=out_dtype,
+                      device=a.device)
+    torch.ops.xspeedgate_ops.cutlass_scaled_mm(out, a.contiguous(),
+                                               b.contiguous(), scale_a,
+                                               scale_b, bias)
     return out
 
 
@@ -1682,7 +1694,9 @@ def fake_cutlass_scaled_mm(
     out_dtype: torch.dtype,
     bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    return torch.empty((a.shape[0], b.shape[1]), dtype=out_dtype, device=a.device)
+    return torch.empty((a.shape[0], b.shape[1]),
+                       dtype=out_dtype,
+                       device=a.device)
 
 
 cutlass_scaled_mm.register_fake(fake_cutlass_scaled_mm)
@@ -1702,10 +1716,12 @@ def cutlass_scaled_mm_azp(
     azp: Optional[torch.Tensor] = None,
     bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    out = torch.empty((a.shape[0], b.shape[1]), dtype=out_dtype, device=a.device)
-    torch.ops.xspeedgate_ops.cutlass_scaled_mm_azp(
-        out, a.contiguous(), b.contiguous(), scale_a, scale_b, azp_adj, azp, bias
-    )
+    out = torch.empty((a.shape[0], b.shape[1]),
+                      dtype=out_dtype,
+                      device=a.device)
+    torch.ops.xspeedgate_ops.cutlass_scaled_mm_azp(out, a.contiguous(),
+                                                   b.contiguous(), scale_a,
+                                                   scale_b, azp_adj, azp, bias)
     return out
 
 
@@ -1720,10 +1736,12 @@ def cutlass_scaled_mm_azp_cuda(
     azp: Optional[torch.Tensor] = None,
     bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    out = torch.empty((a.shape[0], b.shape[1]), dtype=out_dtype, device=a.device)
-    torch.ops.xspeedgate_ops.cutlass_scaled_mm_azp(
-        out, a.contiguous(), b.contiguous(), scale_a, scale_b, azp_adj, azp, bias
-    )
+    out = torch.empty((a.shape[0], b.shape[1]),
+                      dtype=out_dtype,
+                      device=a.device)
+    torch.ops.xspeedgate_ops.cutlass_scaled_mm_azp(out, a.contiguous(),
+                                                   b.contiguous(), scale_a,
+                                                   scale_b, azp_adj, azp, bias)
     return out
 
 
@@ -1737,7 +1755,9 @@ def fake_cutlass_scaled_mm_azp(
     azp: Optional[torch.Tensor] = None,
     bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    return torch.empty((a.shape[0], b.shape[1]), dtype=out_dtype, device=a.device)
+    return torch.empty((a.shape[0], b.shape[1]),
+                       dtype=out_dtype,
+                       device=a.device)
 
 
 cutlass_scaled_mm_azp.register_fake(fake_cutlass_scaled_mm_azp)
@@ -1893,12 +1913,10 @@ quant2d.register_fake(_fake_quant2d)
 # --------------- penalties -----------------
 ##################################################
 @custom_op("_C::apply_repetition_penalties_", mutates_args=())
-def apply_repetition_penalties_(
-    logits: torch.Tensor,
-    prompt_mask: torch.Tensor,
-    output_mask: torch.Tensor,
-    repetition_penalties: torch.Tensor
-) -> None:
+def apply_repetition_penalties_(logits: torch.Tensor,
+                                prompt_mask: torch.Tensor,
+                                output_mask: torch.Tensor,
+                                repetition_penalties: torch.Tensor) -> None:
     repetition_penalties = repetition_penalties.unsqueeze(dim=1).repeat(
         1, logits.size(1))
     # If token appears in prompt or output, apply, otherwise use 1.0 for no-op.
@@ -1908,13 +1926,12 @@ def apply_repetition_penalties_(
     scaling = torch.where(logits > 0, 1.0 / penalties, penalties)
     logits *= scaling
 
+
 @impl("_C::apply_repetition_penalties_", "CUDA")
-def apply_repetition_penalties_(
-    logits: torch.Tensor,
-    prompt_mask: torch.Tensor,
-    output_mask: torch.Tensor,
-    repetition_penalties: torch.Tensor
-) -> None:
+def apply_repetition_penalties_(logits: torch.Tensor,
+                                prompt_mask: torch.Tensor,
+                                output_mask: torch.Tensor,
+                                repetition_penalties: torch.Tensor) -> None:
     repetition_penalties = repetition_penalties.unsqueeze(dim=1).repeat(
         1, logits.size(1))
     # If token appears in prompt or output, apply, otherwise use 1.0 for no-op.

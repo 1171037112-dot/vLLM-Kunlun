@@ -1,16 +1,18 @@
-import os, sys
-import vllm
-
-from torch.utils._python_dispatch import TorchDispatchMode
-import vllm_kunlun.platforms.envs as xenvs 
-from vllm.utils import weak_ref_tensor
-from typing import (TYPE_CHECKING, Any, Callable, Generic, Literal, NamedTuple,
-                    Optional, Tuple, TypeVar, Union, cast, overload,
-                    get_origin, get_args, List)
-import torch
-from torch.library import Library
 import inspect
+import os
+import sys
 import typing
+from typing import Callable, List, Optional, get_args, get_origin
+
+import torch
+import vllm
+from torch.library import Library
+from torch.utils._python_dispatch import TorchDispatchMode
+from vllm.utils import weak_ref_tensor
+
+import vllm_kunlun.platforms.envs as xenvs
+
+
 def redirect_output():
     """
     重定向输出到指定目录，并将日志文件命名为pp=0_rank=X或pp=1_rank=X。
@@ -22,7 +24,7 @@ def redirect_output():
     Returns:
         无返回值，直接修改sys.stdout和sys.stderr的文件描述符。
     """
-    from vllm.distributed import get_tensor_model_parallel_rank, get_pp_group
+    from vllm.distributed import get_pp_group, get_tensor_model_parallel_rank
     rank = get_tensor_model_parallel_rank()
     dir_path = xenvs.VLLM_MULTI_LOGPATH
     os.makedirs(dir_path, exist_ok=True)
@@ -30,10 +32,11 @@ def redirect_output():
         log_file = os.path.join(dir_path, f"pp=0_rank={rank}.log")
     else:
         log_file = os.path.join(dir_path, f"pp=1_rank={rank}.log")
-    fd = os.open(log_file, os.O_WRONLY | os.O_CREAT| os.O_TRUNC, 0o644)
+    fd = os.open(log_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     os.dup2(fd, sys.stdout.fileno())
     os.dup2(fd, sys.stderr.fileno())
     os.close(fd)
+
 
 def multi_log_monkey_patch(func):
     """
@@ -46,11 +49,14 @@ def multi_log_monkey_patch(func):
     Returns:
         function: 返回一个包装后的新函数，每次调用都会打印一条日志信息。
     """
+
     def wrapper(*args, **kwargs):
         print("[monkey patch] ensure_model_parallel_initialized")
         func(*args, **kwargs)
         redirect_output()
+
     return wrapper
+
 
 # if os.environ.get("VLLM_MULTI_LOG", "0") == "1":
 if xenvs.ENABLE_VLLM_MULTI_LOG:
@@ -58,7 +64,9 @@ if xenvs.ENABLE_VLLM_MULTI_LOG:
     vllm.distributed.ensure_model_parallel_initialized = multi_log_monkey_patch(
         vllm.distributed.ensure_model_parallel_initialized)
 
+
 class StageHookPre(object):
+
     def __call__(self, *args, **kwargs):
         """
             在调用对象时，会自动执行此方法。
@@ -79,7 +87,9 @@ class StageHookPre(object):
             else:
                 print("Per Token Start", flush=True)
 
+
 class StageHookPost(object):
+
     def __call__(self, *args, **kwargs):
         """
             如果当前上下文中的attention metadata不为None，并且num_decode_tokens等于0，则打印"First Token End"。
@@ -102,6 +112,7 @@ class StageHookPost(object):
 
 
 class ModuleLoggingHookPre(object):
+
     def __init__(self):
         """
             初始化函数，用于初始化缩进列表和名称列表。
@@ -110,6 +121,7 @@ class ModuleLoggingHookPre(object):
         self.indent_list = list()
         self.indent_list.append("")
         self.name_list = list()
+
     def __call__(self, *args, **kwargs):
         """
             重写了 __call__ 方法，用于在类实例化时调用。
@@ -124,11 +136,13 @@ class ModuleLoggingHookPre(object):
             None.
         """
         self.indent_list.append(self.indent_list[-1] + "\t")
-        self.name_list.append(args[0].__class__.__module__ + args[0].__class__.__name__)
+        self.name_list.append(args[0].__class__.__module__ +
+                              args[0].__class__.__name__)
         print(self.indent_list[-1] + self.name_list[-1] + " Start", flush=True)
 
 
 class ModuleLoggingHookPost(object):
+
     def __init__(self, indent_list, name_list):
         """
             初始化函数，设置缩进列表和名称列表。
@@ -150,13 +164,16 @@ class ModuleLoggingHookPost(object):
         参数：*args、**kwargs - 可变长度的位置参数列表和关键字参数字典，未使用。
         返回值：None，无返回值。
         """
-        print(self.indent_list[-1] + self.name_list[-1] + " Module End", flush=True)
+        print(self.indent_list[-1] + self.name_list[-1] + " Module End",
+              flush=True)
         self.indent_list.pop()
         self.name_list.pop()
 
+
 # if os.environ.get("ENABLE_VLLM_MODULE_HOOK", "0") == "1":
 if xenvs.ENABLE_VLLM_MODULE_HOOK:
-    from torch.nn.modules.module import register_module_forward_pre_hook, register_module_forward_hook
+    from torch.nn.modules.module import (register_module_forward_hook,
+                                         register_module_forward_pre_hook)
     module_logging_hook_pre = ModuleLoggingHookPre()
     module_logging_hook_post = ModuleLoggingHookPost(
         module_logging_hook_pre.indent_list, module_logging_hook_pre.name_list)
@@ -166,14 +183,16 @@ else:
     module_logging_hook_pre = None
     module_logging_hook_post = None
 
+
 class LoggingDispatchMode(TorchDispatchMode):
+
     def __init__(self):
         """
             初始化函数，用于初始化类的属性和方法。
         在此处可以进行一些初始化操作，例如设置默认值等。
         """
         super().__init__()
-    
+
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         """
         Override the default dispatch behavior of torch.nn.Module.
@@ -198,11 +217,12 @@ class LoggingDispatchMode(TorchDispatchMode):
         print(indent + "{} calling".format(func), flush=True)
         result = func(*args, **(kwargs or {}))
         print(indent + "{} called".format(func), flush=True)
-        
-        return result    
+
+        return result
+
 
 class CUDAGraphInnerWatcher(TorchDispatchMode):
-    
+
     def __init__(self, name_list):
         """
             初始化函数，将传入的名称列表保存到类属性中。
@@ -256,6 +276,7 @@ class CUDAGraphInnerWatcher(TorchDispatchMode):
         self.name_list.clear()
         super(CUDAGraphInnerWatcher, self).__exit__(exc_type, exc_val, exc_tb)
 
+
 # def patch_annotations_for_schema(func):
 #     sig = inspect.signature(func)
 #     new_params = []
@@ -267,6 +288,7 @@ class CUDAGraphInnerWatcher(TorchDispatchMode):
 #     new_sig = sig.replace(parameters=new_params)
 #     func.__signature__ = new_sig
 #     return func
+
 
 def patch_annotations_for_schema(func):
     """
@@ -284,7 +306,8 @@ def patch_annotations_for_schema(func):
             inner_type = [a for a in get_args(ann) if a is not type(None)][0]
             if get_origin(inner_type) is list:  # Optional[list[int]]
                 inner_args = get_args(inner_type)
-                new_ann = Optional[List[inner_args[0] if inner_args else typing.Any]]
+                new_ann = Optional[
+                    List[inner_args[0] if inner_args else typing.Any]]
                 param = param.replace(annotation=new_ann)
 
         # 如果是直接 list[int]
@@ -298,11 +321,14 @@ def patch_annotations_for_schema(func):
     func.__signature__ = sig.replace(parameters=new_params)
     return func
 
+
 def supports_custom_op() -> bool:
     """supports_custom_op"""
     return hasattr(torch.library, "custom_op")
 
+
 vllm_lib = Library("vllm", "FRAGMENT")  # noqa
+
 
 def direct_register_custom_op(
         op_name: str,

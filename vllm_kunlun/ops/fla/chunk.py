@@ -9,28 +9,26 @@
 # ruff: noqa: E501
 import warnings
 from typing import Optional
-import torch.nn.functional as F
 
 import torch
-import torch.distributed as dist
+import torch.nn.functional as F
 from einops import rearrange
 
 from .chunk_delta_h import chunk_gated_delta_rule_fwd_h
-from .chunk_o import chunk_fwd_o
 from .chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd
 from .cumsum import chunk_local_cumsum
-from .l2norm import l2norm_fwd
-from .solve_tril import solve_tril
-from .utils import SUPPRESS_LEVEL, input_guard
-from .wy_fast import recompute_w_u_fwd
 from .index import prepare_chunk_indices
-import xspeedgate_ops
-import cocopod
+from .l2norm import l2norm_fwd
+from .utils import SUPPRESS_LEVEL, input_guard
 
 
-def torch_solve_tril(A: torch.Tensor, cu_seqlens: Optional[torch.LongTensor] = None, output_dtype: torch.dtype = torch.float,):
-    chunk_size=64
-    A = -A.transpose(1,2)
+def torch_solve_tril(
+    A: torch.Tensor,
+    cu_seqlens: Optional[torch.LongTensor] = None,
+    output_dtype: torch.dtype = torch.float,
+):
+    chunk_size = 64
+    A = -A.transpose(1, 2)
     sequence_length = A.shape[-2]
     pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
     A = F.pad(A, (0, 0, 0, pad_size))
@@ -41,7 +39,9 @@ def torch_solve_tril(A: torch.Tensor, cu_seqlens: Optional[torch.LongTensor] = N
         sub = A[..., :i, :i].clone()
         A[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
     A = A + torch.eye(chunk_size, dtype=A.dtype, device=A.device)
-    return A.reshape(A.shape[0], A.shape[1], -1, A.shape[-1])[:,:,:sequence_length,:].transpose(1,2)
+    return A.reshape(A.shape[0], A.shape[1], -1,
+                     A.shape[-1])[:, :, :sequence_length, :].transpose(1, 2)
+
 
 def chunk_gated_delta_rule_fwd(q: torch.Tensor,
                                k: torch.Tensor,
@@ -71,8 +71,7 @@ def chunk_gated_delta_rule_fwd(q: torch.Tensor,
         g_cumsum=g,
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
-        chunk_size=64
-    )
+        chunk_size=64)
     h, v_new, final_state = chunk_gated_delta_rule_fwd_h(
         k=k,
         w=w,
@@ -82,17 +81,15 @@ def chunk_gated_delta_rule_fwd(q: torch.Tensor,
         output_final_state=output_final_state,
         cu_seqlens=cu_seqlens,
     )
-    o = torch.ops.xspeedgate_ops.chunk_fwd_o(
-        q=q,
-        k=k,
-        v=v_new,
-        h=h,
-        g=g,
-        scale=scale,
-        cu_seqlens=cu_seqlens,
-        chunk_indices=chunk_indices,
-        chunk_size=64
-    )
+    o = torch.ops.xspeedgate_ops.chunk_fwd_o(q=q,
+                                             k=k,
+                                             v=v_new,
+                                             h=h,
+                                             g=g,
+                                             scale=scale,
+                                             cu_seqlens=cu_seqlens,
+                                             chunk_indices=chunk_indices,
+                                             chunk_size=64)
     if SUPPRESS_LEVEL < 3:
         return g, o, A, final_state, None, None, None
     elif SUPPRESS_LEVEL >= 3:

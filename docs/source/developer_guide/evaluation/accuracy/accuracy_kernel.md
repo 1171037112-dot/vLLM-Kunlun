@@ -102,7 +102,6 @@ The `compare` command is used to process the H5 files generated on the GPU and X
 
 If you encounter a "no matched keys" problem, please refer to the instructions at the end of this article for a solution.
 
-
 #### Example of results
 
 ```bash
@@ -191,7 +190,9 @@ class Qwen3_VisionTransformer(nn.Module):
         end_dump(clear_context=True)
         return hidden_states
 ```
+
 This is the file directory.
+
 ```bash
 ├── xary_debug/                
 │   ├── proc_xxx/     # Process-based storage results

@@ -10,7 +10,6 @@
 from typing import Optional
 
 import torch
-
 import xtorch_ops
 
 
@@ -30,7 +29,7 @@ class FusedRecurrentFunction(torch.autograd.Function):
                 ssm_state_indices: Optional[torch.Tensor] = None,
                 num_accepted_tokens: Optional[torch.Tensor] = None,
                 use_qk_l2norm_in_kernel: bool = False):
-        
+
         o, final_state = xtorch_ops.fused_recurrent_gated_delta_rule_fwdv2(
             q.contiguous(),
             k.contiguous(),
@@ -44,8 +43,7 @@ class FusedRecurrentFunction(torch.autograd.Function):
             h0_indices=ssm_state_indices,
             num_accepted_tokens=num_accepted_tokens,
             use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-            is_h0_transposed=True
-        )
+            is_h0_transposed=True)
         return o, final_state
 
 

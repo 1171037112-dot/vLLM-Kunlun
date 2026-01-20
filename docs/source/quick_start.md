@@ -32,10 +32,12 @@ docker run -itd ${DOCKER_DEVICE_CONFIG} \
     -w /workspace \
     "$build_image" /bin/bash
 ```
+
 ::::
 :::::
 
 Start docker:
+
 ```bash
 #start
 bash ./rundocker.sh <container_name>
@@ -45,14 +47,15 @@ docker exec -it <container_name> bash
 
 The default working directory is `/workspace`. With the fully provisioned environment image we provide, you can quickly start developing and running tasks within this directory.
 ## Set up system environment
+
 ```
 #Set environment 
 chmod +x /workspace/vllm-kunlun/setup_env.sh && source /workspace/vllm-kunlun/setup_env.sh
 ```
+
 ## Usage
 
 You can start the service quickly using the script below.
-
 
 :::::{tab-set}
 ::::{tab-item} Offline Batched Inference

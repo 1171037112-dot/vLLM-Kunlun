@@ -29,38 +29,35 @@ from typing import Any, Optional, Union
 
 import torch
 from torch import nn
-
-from vllm_kunlun.ops.attention.layer import Attention
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig, get_current_vllm_config
 from vllm.distributed import (get_ep_group, get_pp_group,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_gather)
 from vllm.logger import init_logger
-from vllm_kunlun.ops.activation import SiluAndMul
-from vllm_kunlun.ops.fused_moe.layer import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
                                                QKVParallelLinear,
-                                               RowParallelLinear,
-                                               ReplicatedLinear)
+                                               ReplicatedLinear,
+                                               RowParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
-from vllm.model_executor.layers.vocab_parallel_embedding import (
-    ParallelLMHead)
-from vllm_kunlun.ops.vocab_parallel_embedding import VocabParallelEmbedding
+from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.model_executor.model_loader.weight_utils import (
     default_weight_loader, maybe_remap_kv_scale_name)
-from vllm.model_executor.models.utils import sequence_parallel_chunk
+from vllm.model_executor.models.interfaces import (MixtureOfExperts,
+                                                   SupportsLoRA, SupportsPP)
+from vllm.model_executor.models.utils import (
+    AutoWeightsLoader, PPMissingLayer, extract_layer_index,
+    is_pp_missing_parameter, make_empty_intermediate_tensors_factory,
+    make_layers, maybe_prefix, sequence_parallel_chunk)
 from vllm.sequence import IntermediateTensors
-from vllm_kunlun.ops.rotary_embedding import Split_Norm_Rope
 
-from vllm.model_executor.models.interfaces import MixtureOfExperts, SupportsLoRA, SupportsPP
-from vllm.model_executor.models.utils import (AutoWeightsLoader, PPMissingLayer, extract_layer_index,
-                    is_pp_missing_parameter,
-                    make_empty_intermediate_tensors_factory, make_layers,
-                    maybe_prefix)
+from vllm_kunlun.ops.activation import SiluAndMul
+from vllm_kunlun.ops.attention.layer import Attention
+from vllm_kunlun.ops.fused_moe.layer import FusedMoE
+from vllm_kunlun.ops.vocab_parallel_embedding import VocabParallelEmbedding
 
 logger = init_logger(__name__)
 

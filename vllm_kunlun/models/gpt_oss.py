@@ -7,9 +7,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from transformers import GptOssConfig
-
 from vllm.attention import AttentionType
-from vllm_kunlun.ops.attention.layer import Attention
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import (get_ep_group, get_pp_group,
@@ -26,16 +24,16 @@ from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead, VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
-from vllm.model_executor.models.utils import sequence_parallel_chunk
+from vllm.model_executor.models.interfaces import SupportsEagle3, SupportsPP
+from vllm.model_executor.models.utils import (
+    AutoWeightsLoader, WeightsMapper, extract_layer_index,
+    is_pp_missing_parameter, make_empty_intermediate_tensors_factory,
+    make_layers, maybe_prefix, sequence_parallel_chunk)
 from vllm.sequence import IntermediateTensors
 from vllm.utils import cdiv
 
-from vllm.model_executor.models.interfaces  import SupportsEagle3, SupportsPP
-from vllm.model_executor.models.utils  import (AutoWeightsLoader, WeightsMapper, extract_layer_index,
-                    is_pp_missing_parameter,
-                    make_empty_intermediate_tensors_factory, make_layers,
-                    maybe_prefix)
-from vllm_kunlun.ops.activation import SiluAndMul
+from vllm_kunlun.ops.attention.layer import Attention
+
 
 class OAIAttention(nn.Module):
 
@@ -167,8 +165,11 @@ class MLPBlock(torch.nn.Module):
                                 activation="swigluoai",
                                 is_sequence_parallel=self.is_sequence_parallel)
 
-        self.register_buffer("kunlun_linear_weights", torch.zeros(
-                    config.num_local_experts,config.hidden_size,dtype=torch.float32))
+        self.register_buffer(
+            "kunlun_linear_weights",
+            torch.zeros(config.num_local_experts,
+                        config.hidden_size,
+                        dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         num_tokens = x.shape[0]

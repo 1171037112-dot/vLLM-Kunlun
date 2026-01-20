@@ -12,11 +12,9 @@
 from typing import Optional
 
 import torch
-
 from vllm.triton_utils import tl, triton
 
 from .index import prepare_chunk_indices
-from .op import exp
 from .utils import FLA_GDN_FIX_BT, check_shared_mem, is_nvidia_hopper
 
 BKV_LIST = [64, 128] if check_shared_mem() else [32, 64]
@@ -158,23 +156,21 @@ def chunk_fwd_o(
     def grid(meta):
         return (triton.cdiv(V, meta['BV']), NT, B * H)
 
-    chunk_fwd_kernel_o[grid](
-        q,
-        k,
-        v,
-        h,
-        g,
-        o,
-        cu_seqlens,
-        chunk_indices,
-        scale,
-        T=T,
-        H=H,
-        Hg=Hg,
-        K=K,
-        V=V,
-        BT=BT,
-        BK=64,
-        BV=32
-    )
+    chunk_fwd_kernel_o[grid](q,
+                             k,
+                             v,
+                             h,
+                             g,
+                             o,
+                             cu_seqlens,
+                             chunk_indices,
+                             scale,
+                             T=T,
+                             H=H,
+                             Hg=Hg,
+                             K=K,
+                             V=V,
+                             BT=BT,
+                             BK=64,
+                             BV=32)
     return o

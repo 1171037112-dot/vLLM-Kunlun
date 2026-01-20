@@ -27,7 +27,6 @@ else:
     log = tl.log
     log2 = tl.log2
 
-
 if not hasattr(tl, 'gather'):
 
     @triton.jit

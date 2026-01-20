@@ -1,19 +1,19 @@
 """kunlun"""
+from typing import Optional
+
 import psutil
 import torch
-
-from vllm.platforms.interface import DeviceCapability, Platform, PlatformEnum, _Backend
-from typing import Optional, Union
 import vllm.envs as envs
 from vllm.logger import init_logger
-
+from vllm.platforms.interface import DeviceCapability, Platform, PlatformEnum
 
 logger = init_logger(__name__)
 
+
 class KunlunPlatform(Platform):
     """KunlunPlatform"""
-    _enum = PlatformEnum.CUDA 
-    dist_backend:str = "nccl"
+    _enum = PlatformEnum.CUDA
+    dist_backend: str = "nccl"
     ray_device_key: str = "GPU"
     device_name: str = "xpu"
 
@@ -23,7 +23,7 @@ class KunlunPlatform(Platform):
         返回设备类型，固定为'cuda'。
         """
         return "cuda"
-    
+
     def is_kunlun(self) -> bool:
         """is_kunlun"""
         return self._enum == PlatformEnum.CUDA
@@ -119,7 +119,6 @@ class KunlunPlatform(Platform):
         """get_device_capability"""
         major, minor = torch.cuda.get_device_capability()
         return DeviceCapability(major=major, minor=minor)
-    
 
     @classmethod
     def check_and_update_config(cls, vllm_config: "VllmConfig") -> None:
@@ -166,7 +165,7 @@ class KunlunPlatform(Platform):
                             "vllm.v1.worker.gpu_worker.Worker"
                 else:
                     parallel_config.worker_cls = "vllm.worker.worker.Worker"
-        
+
         cache_config = vllm_config.cache_config
         if cache_config and cache_config.block_size is None:
             cache_config.block_size = 16
@@ -212,10 +211,17 @@ class KunlunPlatform(Platform):
             vllm_config.compilation_config.pass_config.enable_fusion = False
             vllm_config.compilation_config.use_inductor = False
 
-
     @classmethod
-    def get_attn_backend_cls(cls, selected_backend, head_size, dtype,
-                             kv_cache_dtype, block_size, use_v1, use_mla,use_sink, use_sparse=False):
+    def get_attn_backend_cls(cls,
+                             selected_backend,
+                             head_size,
+                             dtype,
+                             kv_cache_dtype,
+                             block_size,
+                             use_v1,
+                             use_mla,
+                             use_sink,
+                             use_sparse=False):
         """
             Returns the class of attention backend based on the selected backend and other parameters.
         
@@ -236,12 +242,13 @@ class KunlunPlatform(Platform):
                 logger.info_once("Using Sparse MLA backend on V1 engine.")
                 # return ("vllm.v1.attention.backends.mla.flashmla_sparse."
                 #         "FlashMLASparseBackend")
-                return ("vllm_kunlun.v1.attention.backends.mla.flashmla_sparse."
-                        "FlashMLASparseBackend")
+                return (
+                    "vllm_kunlun.v1.attention.backends.mla.flashmla_sparse."
+                    "FlashMLASparseBackend")
             return "vllm_kunlun.v1.attention.backends.mla.flashmla.FlashMLABackend"
         if use_v1:
             return "vllm_kunlun.v1.attention.backends.kunlun_attn.KunlunAttentionBackend"
-        elif not use_mla:                     
+        elif not use_mla:
             return "vllm_kunlun.ops.attention.backends.kunlun_attn.KunlunAttentionBackend"
         else:
             return "vllm_kunlun.attention.backends.kunlun_mla.KunlunMLAAttentionBackend"
@@ -304,15 +311,15 @@ class KunlunPlatform(Platform):
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:
-       '''
+        '''
        communicator
        '''
-       return "vllm_kunlun.distributed.kunlun_communicator.KunlunCommunicator"
+        return "vllm_kunlun.distributed.kunlun_communicator.KunlunCommunicator"
 
     @classmethod
     def get_punica_wrapper(cls):
         return "vllm.lora.punica_wrapper.punica_cpu.PunicaWrapperCPU"
-    
+
     @classmethod
     def check_if_supports_dtype(cls, torch_dtype: torch.dtype):
         '''
@@ -327,15 +334,14 @@ class KunlunPlatform(Platform):
         if torch_dtype not in supported_dtypes:
             raise ValueError(
                 f"Kunlun platform does not support dtype {torch_dtype}. "
-                "Supported dtypes are: fp32, fp16, bf16, int8."
-            )
-       
+                "Supported dtypes are: fp32, fp16, bf16, int8.")
+
     def opaque_attention_op(cls) -> bool:
         '''
         确保V1 Graph在Kunlun3平台使用vllm.unified_attention_with_output_kunlun作为split ops 
         '''
         return True
-    
+
     @classmethod
     def support_hybrid_kv_cache(cls) -> bool:
         return True

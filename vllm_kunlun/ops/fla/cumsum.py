@@ -11,7 +11,6 @@ import warnings
 from typing import Optional
 
 import torch
-
 from vllm.triton_utils import tl, triton
 
 from .index import prepare_chunk_indices
@@ -143,19 +142,17 @@ def chunk_local_cumsum_scalar(
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)
     g_org, g = g, torch.empty_like(g, dtype=output_dtype or g.dtype)
     grid = (NT, B * H)
-    chunk_local_cumsum_scalar_kernel[grid](
-        s=g_org,
-        o=g,
-        cu_seqlens=cu_seqlens,
-        chunk_indices=chunk_indices,
-        T=T,
-        B=B,
-        H=H,
-        BT=BT,
-        HEAD_FIRST=head_first,
-        REVERSE=reverse,
-        is_use_mask_zero = True
-    )
+    chunk_local_cumsum_scalar_kernel[grid](s=g_org,
+                                           o=g,
+                                           cu_seqlens=cu_seqlens,
+                                           chunk_indices=chunk_indices,
+                                           T=T,
+                                           B=B,
+                                           H=H,
+                                           BT=BT,
+                                           HEAD_FIRST=head_first,
+                                           REVERSE=reverse,
+                                           is_use_mask_zero=True)
     return g
 
 

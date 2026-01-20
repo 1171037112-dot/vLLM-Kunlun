@@ -37,7 +37,6 @@ from transformers import BatchFeature
 from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor
 from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import (
     Qwen2_5_VLConfig, Qwen2_5_VLVisionConfig)
-
 from vllm.config import VllmConfig
 from vllm.distributed import parallel_state
 from vllm.distributed import utils as dist_utils
@@ -49,24 +48,26 @@ from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                QKVParallelLinear,
                                                RowParallelLinear)
 from vllm.model_executor.layers.quantization import QuantizationConfig
-
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+from vllm.model_executor.models.interfaces import (MultiModalEmbeddings,
+                                                   SupportsLoRA,
+                                                   SupportsMultiModal,
+                                                   SupportsPP, SupportsQuant)
 from vllm.model_executor.models.module_mapping import MultiModelKeys
+from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
+                                              cast_overflow_tensors,
+                                              init_vllm_registered_model,
+                                              maybe_prefix,
+                                              merge_multimodal_embeddings)
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.inputs import MultiModalFieldConfig
 from vllm.platforms import _Backend
 from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import uses_mrope
 
-from vllm.model_executor.models.interfaces import (MultiModalEmbeddings, SupportsLoRA,
-                         SupportsMultiModal, SupportsPP, SupportsQuant)
 from .qwen2_vl import Qwen2VLDummyInputsBuilder as Qwen2_5_VLDummyInputsBuilder
 from .qwen2_vl import (Qwen2VLMultiModalProcessor, Qwen2VLProcessingInfo,
                        apply_rotary_pos_emb_vision)
-from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper, cast_overflow_tensors,
-                    init_vllm_registered_model, maybe_prefix,
-                    merge_multimodal_embeddings)
-from vllm.model_executor.models.vision import get_vit_attn_backend
 
 logger = init_logger(__name__)
 
@@ -216,17 +217,16 @@ def all_gather_interleave(local_tensor, hidden_size: int, tp_size: int):
 class Qwen2_5_VisionAttention(nn.Module):
     """
     """
-    def __init__(
-        self,
-        embed_dim: int,
-        num_heads: int,
-        projection_size: int,
-        quant_config: Optional[QuantizationConfig] = None,
-        prefix: str = "",
-        use_data_parallel: bool = False,
-        attn_backend: _Backend = _Backend.TORCH_SDPA,
-        use_upstream_fa: bool = False
-    ) -> None:
+
+    def __init__(self,
+                 embed_dim: int,
+                 num_heads: int,
+                 projection_size: int,
+                 quant_config: Optional[QuantizationConfig] = None,
+                 prefix: str = "",
+                 use_data_parallel: bool = False,
+                 attn_backend: _Backend = _Backend.TORCH_SDPA,
+                 use_upstream_fa: bool = False) -> None:
         """
             Initializes the Qwen2.5-VL module.
         
@@ -504,8 +504,8 @@ class Qwen2_5_VisionRotaryEmbedding(nn.Module):
         super().__init__()
         self.dim = dim
         self.theta = theta
-        inv_freq = 1.0 / (theta**(
-            torch.arange(0, dim, 2, dtype=torch.float) / dim))
+        inv_freq = 1.0 / (theta
+                          **(torch.arange(0, dim, 2, dtype=torch.float) / dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self._seq_len_cached = 0
         self._freqs_cached = None
@@ -1030,7 +1030,8 @@ class Qwen2_5_VLForConditionalGeneration(nn.Module, SupportsMultiModal,
 
         # Split concatenated embeddings for each image item.
         merge_size = self.visual.spatial_merge_size
-        sizes = (grid_thw[:, 0] * grid_thw[:, 1] * grid_thw[:, 2]) // (merge_size * merge_size)
+        sizes = (grid_thw[:, 0] * grid_thw[:, 1] *
+                 grid_thw[:, 2]) // (merge_size * merge_size)
 
         return image_embeds.split(sizes.tolist())
 
@@ -1065,7 +1066,7 @@ class Qwen2_5_VLForConditionalGeneration(nn.Module, SupportsMultiModal,
 
         # Split concatenated embeddings for each video item.
         merge_size = self.visual.spatial_merge_size
-        sizes = grid_thw.prod(grid_thw.dim() - 1)  // merge_size // merge_size
+        sizes = grid_thw.prod(grid_thw.dim() - 1) // merge_size // merge_size
 
         return video_embeds.split(sizes.tolist())
 
@@ -1157,7 +1158,7 @@ class Qwen2_5_VLForConditionalGeneration(nn.Module, SupportsMultiModal,
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-        kv_caches: list[torch.Tensor]= None,
+        kv_caches: list[torch.Tensor] = None,
         **kwargs: object,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         """Run forward pass for Qwen2.5-VL.
@@ -1220,7 +1221,7 @@ class Qwen2_5_VLForConditionalGeneration(nn.Module, SupportsMultiModal,
         # sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
         return self.language_model.compute_logits(hidden_states)
-                                                #   sampling_metadata)
+        #   sampling_metadata)
 
     def load_weights(self, weights: Iterable[tuple[str,
                                                    torch.Tensor]]) -> set[str]:

@@ -15,7 +15,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PretrainedConfig
 from transformers.utils import torch_int
-
 from vllm.model_executor.layers.activation import get_act_fn
 # from vllm_kunlun.ops.activation import GeluAndMul
 from vllm.model_executor.layers.layernorm import RMSNorm
@@ -89,6 +88,7 @@ class InternS1VisionEmbeddings(nn.Module):
                 torch.zeros(1, num_patches + 1, config.hidden_size))
         else:
             self.position_embeddings = None
+
     @torch._dynamo.disable
     def interpolate_pos_encoding(self, embeddings: torch.Tensor, height: int,
                                  width: int) -> torch.Tensor:

@@ -15,8 +15,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PretrainedConfig
-
-from vllm_kunlun.ops.attention.layer import MultiHeadAttention
 from vllm.distributed import (divide, get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               split_tensor_along_last_dim,
@@ -28,8 +26,9 @@ from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                RowParallelLinear)
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
-
 from vllm.model_executor.models.vision import run_dp_sharded_vision_model
+
+from vllm_kunlun.ops.attention.layer import MultiHeadAttention
 
 NORM2FN = {
     'rms_norm': RMSNorm,

@@ -9,8 +9,6 @@ from types import CodeType
 from typing import Callable, Optional
 
 import torch
-
-import vllm.envs as envs
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
@@ -32,7 +30,7 @@ class TorchCompileWrapperWithCustomDispatcher:
     def __init__(self,
                  compiled_callable: Optional[Callable] = None,
                  compilation_level: int = 0):
-        from vllm.config import get_current_vllm_config, CUDAGraphMode
+        from vllm.config import get_current_vllm_config
         vllm_config = get_current_vllm_config()
         self.vllm_config = vllm_config
         if compiled_callable is None:
@@ -47,13 +45,13 @@ class TorchCompileWrapperWithCustomDispatcher:
 
             compiled_callable = torch.compile(
                 self.forward,
-                fullgraph=True, #envs.VLLM_TEST_DYNAMO_FULLGRAPH_CAPTURE,
+                fullgraph=True,  #envs.VLLM_TEST_DYNAMO_FULLGRAPH_CAPTURE,
                 backend=backend,
                 options=options)
-            
+
         # print(vllm_config.compilation_config)
         # vllm_config.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
-        # vllm_config.compilation_config.cudagraph_capture_sizes = [32768] 
+        # vllm_config.compilation_config.cudagraph_capture_sizes = [32768]
 
         self.compiled_callable = compiled_callable
         self.original_code_object = self.__class__.forward.__code__

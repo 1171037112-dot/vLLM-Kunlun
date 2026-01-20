@@ -15,12 +15,12 @@
 # This file is a part of the vllm-ascend project.
 #
 
-import vllm_kunlun.ops.rotary_embedding
-import vllm_kunlun.ops.layernorm
-import vllm_kunlun.ops.quantization.awq
-import vllm_kunlun.ops.quantization.gptq
-import vllm_kunlun.ops.vocab_parallel_embedding
-import vllm_kunlun.ops.linear
 import vllm_kunlun.ops.fused_moe.layer
+import vllm_kunlun.ops.layernorm
+import vllm_kunlun.ops.linear
+import vllm_kunlun.ops.quantization.awq
 import vllm_kunlun.ops.quantization.compressed_tensors.compressed_tensors_moe
+import vllm_kunlun.ops.quantization.gptq
 import vllm_kunlun.ops.quantization.kernels.kunlun_scale_mm
+import vllm_kunlun.ops.rotary_embedding
+import vllm_kunlun.ops.vocab_parallel_embedding

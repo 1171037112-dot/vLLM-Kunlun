@@ -9,17 +9,12 @@ from typing import Any, Optional, Union
 import torch
 from torch import nn
 from transformers import PretrainedConfig
-
-# from vllm.attention import Attention
-from vllm_kunlun.ops.attention.layer import Attention
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import (get_pp_group, get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               split_tensor_along_last_dim,
                               tensor_model_parallel_all_gather)
-# from vllm.model_executor.layers.activation import SiluAndMul
-from vllm_kunlun.ops.activation import SiluAndMul
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
                                                QKVParallelLinear,
@@ -31,13 +26,17 @@ from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead, VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
-from vllm.sequence import IntermediateTensors
-
 from vllm.model_executor.models.interfaces import SupportsLoRA, SupportsPP
 from vllm.model_executor.models.interfaces_base import default_pooling_type
-from vllm.model_executor.models.utils import (is_pp_missing_parameter,
-                    make_empty_intermediate_tensors_factory, make_layers,
-                    maybe_prefix)
+from vllm.model_executor.models.utils import (
+    is_pp_missing_parameter, make_empty_intermediate_tensors_factory,
+    make_layers, maybe_prefix)
+from vllm.sequence import IntermediateTensors
+
+# from vllm.model_executor.layers.activation import SiluAndMul
+from vllm_kunlun.ops.activation import SiluAndMul
+# from vllm.attention import Attention
+from vllm_kunlun.ops.attention.layer import Attention
 
 
 class InternLM2MLP(nn.Module):

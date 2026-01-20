@@ -3,18 +3,14 @@
 """Attention backend utils"""
 from collections import defaultdict
 from contextlib import contextmanager
-from dataclasses import dataclass
 from itertools import accumulate
-from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type,
-                    TypeVar, Union)
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple, Type, TypeVar, Union
 
 import numpy as np
 import torch
-
 from vllm.attention import (AttentionMetadata, AttentionMetadataBuilder,
                             AttentionState)
 from vllm.attention.backends.abstract import AttentionType
-from vllm.config import ModelConfig
 from vllm.logger import init_logger
 from vllm.multimodal import MultiModalPlaceholderMap
 from vllm.utils import async_tensor_h2d, make_tensor_with_pad
@@ -373,7 +369,8 @@ class CommonAttentionState(AttentionState):
         input_buffers = {
             "slot_mapping": attn_metadata.slot_mapping,
             "seq_lens_tensor": attn_metadata.decode_metadata.seq_lens_tensor,
-            "seq_lens_tensor_cpu": attn_metadata.decode_metadata.seq_lens_tensor_cpu,
+            "seq_lens_tensor_cpu":
+            attn_metadata.decode_metadata.seq_lens_tensor_cpu,
             "block_tables": attn_metadata.decode_metadata.block_tables,
         }
         if is_encoder_decoder_model:
@@ -455,7 +452,8 @@ class CommonAttentionState(AttentionState):
         input_buffers["encoder_seq_lens_tensor"] = (
             attn_metadata.decode_metadata.encoder_seq_lens_tensor)
         input_buffers["seq_lens_tensor_cpu"].copy_(
-            attn_metadata.decode_metadata.seq_lens_tensor_cpu, non_blocking=True)
+            attn_metadata.decode_metadata.seq_lens_tensor_cpu,
+            non_blocking=True)
         input_buffers["cross_slot_mapping"] = (
             attn_metadata.decode_metadata.cross_slot_mapping)
         input_buffers["cross_block_tables"] = (

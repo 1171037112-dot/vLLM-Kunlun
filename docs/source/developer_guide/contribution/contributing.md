@@ -38,6 +38,7 @@ python -m vllm.entrypoints.openai.api_server \
                                                 "vllm.gdn_attention", 
                                                 "vllm.sparse_attn_indexer"]}' \ 
 ```
+
 Please save a screenshot of your service running successfully, and attach an accuracy report.
 
 ### Submit the commit
@@ -48,7 +49,6 @@ git commit -sm "your commit info"
 ```
 
 🎉 Congratulations! You have completed the development environment setup.
-
 
 ## PR Title and Classification
 
@@ -73,4 +73,4 @@ If the PR spans more than one category, please include all relevant prefixes.
 
 ## Others
 
-If you find any problem when contributing, you can join our slack group to talk with us and then feel free to submit a PR to improve the doc to help other developers. 
+If you find any problem when contributing, you can join our slack group to talk with us and then feel free to submit a PR to improve the doc to help other developers.

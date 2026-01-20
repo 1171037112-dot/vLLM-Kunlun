@@ -1,7 +1,5 @@
 # Profiling
 
-
-
 ## 🔧 Action Plan（Three Phases）
 ### Phase 1️⃣: Multi-Device Log Redirection Configuration
 #### Background
@@ -13,6 +11,7 @@ By default, kernel logs from all 8 XPU devices are interleaved and emitted to [s
 #### Solution
 During model initialization, create separate log files for each device.
 #### Code Explanation (embedded in qwen2.py)
+
 ```python
 import os  # ← Ensure this is imported at the top of the file
 from vllm.distributed import get_tensor_model_parallel_rank  # ← Import function to get the tensor model parallel rank
@@ -54,6 +53,7 @@ class Qwen2Model(nn.Module):
         # ========== End of log redirection code ==========
 
 ```
+
 #### ⚠️ Common Issues
 **Q1**:Why not use Python's `logging` module?
 **A**:The XPU runtime kernel logs are emitted from the C++ layer and cannot be captured by Python’s `logging` module. Redirection via low-level file descriptors is required.
@@ -62,6 +62,7 @@ class Qwen2Model(nn.Module):
 
 ### Phase 2️⃣: Profiling Environment Activation
 #### 🚀 vLLM Launch
+
 ```bash
 unset XPU_DUMMY_EVENT
 export XPU_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
@@ -102,8 +103,8 @@ USE_ORI_ROPE=1 VLLM_USE_V1=1 python -m vllm.entrypoints.openai.api_server \
 
 ```
 
-
 #### 🚀 Client Load Testing
+
 ```bash
 #!/bin/bash
 
@@ -177,6 +178,7 @@ echo "=========================================================="
 ```
 
 ### Phase 3️⃣: Log Analysis and Bottleneck Identification
+
 ```text
 xpu_logs/
 ├─ rank_0.log
@@ -189,16 +191,18 @@ xpu_logs/
 └─ rank_7.log
 
 ```
+
 #### 🔍 Script Workflow (op_log.py)
 **Input**:Raw Kernel Logs (Sample Format)
+
 ```
 [XPURT_PROF] void xblas_xpu3::fc_cdnn_infer<float16,...> 123456 ns
 [XPURT_PROF] void kl3_all_reduce<float16> 987654 ns
 ```
+
 **Processing logic**
 :::::{tab-set}
-::::{tab-item} op_log.py 
-
+::::{tab-item} op_log.py
 
 ```python
 """
@@ -382,8 +386,6 @@ if __name__ == '__main__':
 
 ::::{tab-item} op_log.sh
 
-
-
 ```bash
 
 for i in {0..7}; do
@@ -397,9 +399,11 @@ for i in {0..7}; do
     head -n 6 analysis_rank${i}.log | tail -n 5
 done
 ```
+
 ::::
 :::::
 #### 📈 Output Example (analysis_rank0.log)
+
 ```
 Filename: xpu_logs/rank_0.log
 -xpu option: 2
@@ -410,6 +414,7 @@ void xblas_xpu3::fc_cdnn_infer<float16, float16, float16, float16, float, 
 void kl3_all_reduce<float16>                                                                                                                          176134    14782.525712413793       27.506              
 void kl3_all_reduce_butterfly<float16>                                                                                                                164864    4197.28395862069         7.81           
 ```
+
 #### 🚨 Troubleshooting Guide
 |Symptom|Cause|Solution|
 |-|-|-|
