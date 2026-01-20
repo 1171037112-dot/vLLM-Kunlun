@@ -1,6 +1,3 @@
-# /home/models/GLM-4.7-W8A8-INT8-Dynamic-RTN
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export VLLM_USE_V1=1 
 nohup python3 -m vllm.entrypoints.openai.api_server  \
 	--host localhost    \
 	--port 8123    \
